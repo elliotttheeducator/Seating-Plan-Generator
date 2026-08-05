@@ -54,8 +54,8 @@
     linear-gradient(#fff,#fff);
     cursor:default;}
   svg#canvas .grid-line{stroke:rgba(255,255,255,.4);stroke-width:1;pointer-events:none;}
-  .wall-rect{fill:#eef1f5;stroke:#9aa5b3;stroke-width:2;}
-  .wall-rect.selected{stroke:var(--accent);stroke-width:3;}
+  .wall-rect{stroke:#6b5a45;stroke-width:5;}
+  .wall-rect.selected{stroke:var(--accent);stroke-width:5;}
   .table-shape{stroke:#a39d8f;stroke-width:2;cursor:grab;}
   input[type=color]{width:26px;height:24px;padding:1px;border:1px solid var(--border);border-radius:4px;vertical-align:middle;cursor:pointer;}
   .table-shape.selected{stroke:var(--accent);stroke-width:3;}
@@ -84,10 +84,13 @@
   .pairs-col:last-child{border-right:none;}
   .pairs-col .studentlist{max-height:none;}
   .pairs-col .studentlist li{padding:9px 6px;font-size:14px;}
-  .pairs-col .studentlist li.pickable{cursor:pointer;border-radius:6px;}
-  .pairs-col .studentlist li.pickable:hover{background:#eef2ff;}
-  .pairs-col .studentlist li.picked-a{background:#dbe8ff;font-weight:600;}
+  .pairs-col .studentlist li.pickable{cursor:pointer;border-radius:6px;background:#f5f7fb;border:1px solid var(--border);margin-bottom:2px;}
+  .pairs-col .studentlist li.pickable:hover{background:#eef2ff;border-color:var(--accent);}
+  .pairs-col .studentlist li.picked-a{background:#dbe8ff;font-weight:600;border:1px solid var(--accent);}
+  .pairs-col .studentlist li.seated{opacity:.5;}
+  .pairs-col .studentlist li.seated .name{text-decoration:line-through;color:var(--muted);}
   .pairs-col .studentlist li.blocked{opacity:.4;}
+  .pairs-empty-hint{color:var(--muted);font-size:13px;padding:10px 2px;}
   .pairs-col .studentlist li .avail{font-size:11px;color:var(--muted);margin-left:auto;}
   .lock-overlay{position:fixed;inset:0;background:#0f172a;z-index:2000;display:flex;align-items:center;justify-content:center;}
   .lock-overlay.hidden{display:none;}
@@ -328,6 +331,22 @@ function computeFitViewBox(cls){
   const w = Math.max(b.maxX - b.minX + pad*2, 560);
   const h = Math.max(b.maxY - b.minY + pad*2, 360);
   return { x, y, w, h };
+}
+function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+// Sized relative to the room's actual width (from its walls, if any) so it never spills
+// past a narrow room, and stays readable (font/height scale with it) when presented.
+function computeWhiteboardRect(cls){
+  let minX = 0, maxX = BASE_ROOM_W;
+  if(cls.walls && cls.walls.length){
+    minX = Math.min(...cls.walls.map(w=>w.x));
+    maxX = Math.max(...cls.walls.map(w=>w.x+w.w));
+  }
+  const roomW = maxX - minX;
+  const w = Math.max(roomW * 0.85, Math.min(roomW, 100));
+  const x = minX + (roomW - w)/2;
+  const h = clamp(roomW * 0.022, 14, 26);
+  const fontSize = clamp(roomW * 0.012, 9, 16);
+  return { x, y:6, w, h, fontSize };
 }
 
 function uid(){ return 'id' + Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
@@ -825,24 +844,31 @@ function renderCanvas(cls){
   addCarpetDefs(svg, 'carpetPattern', theme.floorColor);
   const vb = currentViewBox;
   svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
-  const bg = el('rect', {x:vb.x,y:vb.y,width:vb.w,height:vb.h,fill:'url(#carpetPattern)', 'data-role':'canvas-bg'}, svg);
+  // The canvas itself isn't the floor: walls carry the carpet texture (that's "the room"),
+  // everything outside them is plain neutral space. With no walls drawn yet, fall back to
+  // carpeting the whole visible area so a brand-new room doesn't look empty.
+  const hasWalls = cls.walls && cls.walls.length > 0;
+  const bg = el('rect', {x:vb.x,y:vb.y,width:vb.w,height:vb.h,fill: hasWalls ? '#eef0f3' : 'url(#carpetPattern)', 'data-role':'canvas-bg'}, svg);
   const gx0 = Math.floor(vb.x/25)*25, gy0 = Math.floor(vb.y/25)*25;
   for(let gx=gx0; gx<=vb.x+vb.w; gx+=25) el('line', {x1:gx,y1:vb.y,x2:gx,y2:vb.y+vb.h,class:'grid-line'}, svg);
   for(let gy=gy0; gy<=vb.y+vb.h; gy+=25) el('line', {x1:vb.x,y1:gy,x2:vb.x+vb.w,y2:gy,class:'grid-line'}, svg);
-  el('rect', {x:20,y:6,width:960,height:18,fill:'#334155',rx:3,'pointer-events':'none'}, svg);
-  el('text', {x:500,y:19,'text-anchor':'middle',fill:'#fff','font-size':10,'font-weight':'bold','pointer-events':'none'}, svg).textContent = 'WHITEBOARD / FRONT OF ROOM (authoring view — use Present for teacher/student orientation)';
 
   for(const w of cls.walls){
     const r = el('rect', {
       x:w.x, y:w.y, width:w.w, height:w.h,
+      style:'fill:url(#carpetPattern)',
       class: 'wall-rect' + (w.id===selectedWallId ? ' selected' : ''),
       'data-role':'wall', 'data-id': w.id
     }, svg);
   }
 
   if(drag && drag.type==='wall-draw'){
-    el('rect', {x:drag.rx,y:drag.ry,width:drag.rw,height:drag.rh,class:'wall-rect',opacity:.6}, svg);
+    el('rect', {x:drag.rx,y:drag.ry,width:drag.rw,height:drag.rh,style:'fill:url(#carpetPattern)',class:'wall-rect',opacity:.6}, svg);
   }
+
+  const wb = computeWhiteboardRect(cls);
+  el('rect', {x:wb.x,y:wb.y,width:wb.w,height:wb.h,fill:'#334155',rx:3,'pointer-events':'none'}, svg);
+  el('text', {x:wb.x+wb.w/2,y:wb.y+wb.h/2+wb.fontSize*0.35,'text-anchor':'middle',fill:'#fff','font-size':wb.fontSize,'font-weight':'bold','pointer-events':'none'}, svg).textContent = 'WHITEBOARD / FRONT OF ROOM';
 
   for(const d of (cls.doors||[])){
     const g = el('g', {transform:`translate(${d.x},${d.y}) rotate(${d.rot})`}, svg);
@@ -882,6 +908,15 @@ function renderCanvas(cls){
     }
   }
 
+  if(drag && drag.guides){
+    for(const guide of drag.guides){
+      if(guide.type === 'v'){
+        el('line', {x1:guide.x,y1:vb.y,x2:guide.x,y2:vb.y+vb.h, stroke:'#ec4899', 'stroke-width':1, 'stroke-dasharray':'5,4', opacity:.8, 'pointer-events':'none'}, svg);
+      } else {
+        el('line', {x1:vb.x,y1:guide.y,x2:vb.x+vb.w,y2:guide.y, stroke:'#ec4899', 'stroke-width':1, 'stroke-dasharray':'5,4', opacity:.8, 'pointer-events':'none'}, svg);
+      }
+    }
+  }
 }
 
 // Shortened to "First L." on the room diagram (seats are cramped) — still tells
@@ -966,6 +1001,27 @@ function expandViewBoxToInclude(p){
   if(changed) svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
 }
 
+// Soft alignment: while dragging a table/door, snap it to any other table/door that's
+// almost exactly lined up on x or y, and report a guide line to draw. Threshold is small
+// on purpose — "very soft assistance" per the brief, not a hard grid lock.
+const ALIGN_THRESHOLD = 8; // cm
+function computeAlignment(cls, movingId, moving){
+  const anchors = [];
+  for(const t of cls.tables) if(t.id !== movingId) anchors.push({x:t.x, y:t.y});
+  for(const d of (cls.doors||[])) if(d.id !== movingId) anchors.push({x:d.x, y:d.y});
+  const guides = [];
+  let bestX=null, bestXd=ALIGN_THRESHOLD, bestY=null, bestYd=ALIGN_THRESHOLD;
+  for(const a of anchors){
+    const dx = Math.abs(moving.x - a.x);
+    if(dx < bestXd){ bestXd = dx; bestX = a.x; }
+    const dy = Math.abs(moving.y - a.y);
+    if(dy < bestYd){ bestYd = dy; bestY = a.y; }
+  }
+  if(bestX !== null){ moving.x = bestX; guides.push({type:'v', x:bestX}); }
+  if(bestY !== null){ moving.y = bestY; guides.push({type:'h', y:bestY}); }
+  return guides;
+}
+
 function svgPoint(evt){
   const pt = svg.createSVGPoint();
   pt.x = evt.clientX; pt.y = evt.clientY;
@@ -1032,6 +1088,7 @@ svg.addEventListener('pointermove', (e) => {
   if(drag.type === 'table'){
     const t = cls.tables.find(tt=>tt.id===drag.tableId);
     t.x = p.x + drag.dx; t.y = p.y + drag.dy;
+    drag.guides = computeAlignment(cls, t.id, t);
     expandViewBoxToInclude(p);
     renderCanvas(cls);
   } else if(drag.type === 'rotate'){
@@ -1042,6 +1099,7 @@ svg.addEventListener('pointermove', (e) => {
   } else if(drag.type === 'door'){
     const d = (cls.doors||[]).find(dd=>dd.id===drag.doorId);
     d.x = p.x + drag.dx; d.y = p.y + drag.dy;
+    drag.guides = computeAlignment(cls, d.id, d);
     expandViewBoxToInclude(p);
     renderCanvas(cls);
   } else if(drag.type === 'doorRotate'){
@@ -1281,17 +1339,21 @@ function renderPresent(){
   const fy = (y) => flip ? 2*cy - y : y;
   const frot = (r) => flip ? r + 180 : r;
 
-  el('rect', {x:pvb.x,y:pvb.y,width:pvb.w,height:pvb.h,fill:'url(#carpetPatternPresent)'}, presentSvg);
-  const wbX = flip ? 2*cx - 980 : 20;
-  const wbY = flip ? 2*cy - 30 : 6;
-  el('rect', {x:wbX,y:wbY,width:960,height:24,fill:'#334155',rx:4}, presentSvg);
-  el('text', {x:wbX+480,y:wbY+16,'text-anchor':'middle',fill:'#fff','font-size':13,'font-weight':'bold'}, presentSvg).textContent = 'WHITEBOARD / FRONT OF ROOM';
+  const hasWalls = cls.walls && cls.walls.length > 0;
+  el('rect', {x:pvb.x,y:pvb.y,width:pvb.w,height:pvb.h,fill: hasWalls ? '#eef0f3' : 'url(#carpetPatternPresent)'}, presentSvg);
 
   for(const w of cls.walls){
     const nx = flip ? 2*cx - (w.x+w.w) : w.x;
     const ny = flip ? 2*cy - (w.y+w.h) : w.y;
-    el('rect', {x:nx,y:ny,width:w.w,height:w.h,class:'wall-rect'}, presentSvg);
+    el('rect', {x:nx,y:ny,width:w.w,height:w.h,style:'fill:url(#carpetPatternPresent)',class:'wall-rect'}, presentSvg);
   }
+
+  const wb = computeWhiteboardRect(cls);
+  const wbX = flip ? 2*cx - (wb.x+wb.w) : wb.x;
+  const wbY = flip ? 2*cy - (wb.y+wb.h*1.6) : wb.y;
+  const wbFont = wb.fontSize * 1.5;
+  el('rect', {x:wbX,y:wbY,width:wb.w,height:wb.h*1.6,fill:'#334155',rx:4}, presentSvg);
+  el('text', {x:wbX+wb.w/2,y:wbY+wb.h*0.8+wbFont*0.35,'text-anchor':'middle',fill:'#fff','font-size':wbFont,'font-weight':'bold'}, presentSvg).textContent = 'WHITEBOARD / FRONT OF ROOM';
 
   for(const d of (cls.doors||[])){
     const dx = fx(d.x), dy = fy(d.y), drot = frot(d.rot);
@@ -1333,18 +1395,26 @@ function renderPairsScreen(){
   const cls = getClass();
   const rosterList = document.getElementById('pairsRosterList');
   rosterList.innerHTML = '';
+  let anyPickable = false;
   for(const s of cls.students){
     const seated = isSeated(cls, s.id);
+    if(!seated) anyPickable = true;
     const li = document.createElement('li');
-    li.className = (s.id===pairsSelectedId ? 'picked-a ' : '') + (seated ? '' : 'pickable');
+    li.className = (s.id===pairsSelectedId ? 'picked-a ' : '') + (seated ? 'seated' : 'pickable');
     const nameSpan = document.createElement('span');
     nameSpan.className = 'name'; nameSpan.textContent = s.name;
     li.appendChild(nameSpan);
     const tag = document.createElement('span');
-    tag.className = 'avail'; tag.textContent = seated ? 'seated' : '';
+    tag.className = 'avail'; tag.textContent = seated ? 'seated' : 'click to pick →';
     li.appendChild(tag);
     if(!seated) li.onclick = () => { pairsSelectedId = s.id; renderPairsScreen(); };
     rosterList.appendChild(li);
+  }
+  if(!anyPickable){
+    const hint = document.createElement('div');
+    hint.className = 'pairs-empty-hint';
+    hint.textContent = 'Everyone is already seated. Click "Clear Seats" in the sidebar to pair again.';
+    rosterList.appendChild(hint);
   }
 
   const candTitle = document.getElementById('pairsCandidateTitle');
