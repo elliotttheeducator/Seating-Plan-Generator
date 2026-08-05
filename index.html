@@ -78,6 +78,24 @@
   .present-bar strong{font-size:16px;}
   .present-canvas-wrap{flex:1;display:flex;align-items:center;justify-content:center;overflow:auto;background:#f8fafc;}
   #presentSvg{background:#fff;box-shadow:0 0 0 1px var(--border);max-width:100%;height:auto;}
+  .pairs-body{flex:1;display:flex;overflow:hidden;}
+  .pairs-col{flex:1;padding:16px 20px;overflow-y:auto;border-right:1px solid var(--border);}
+  .pairs-col:last-child{border-right:none;}
+  .pairs-col .studentlist{max-height:none;}
+  .pairs-col .studentlist li{padding:9px 6px;font-size:14px;}
+  .pairs-col .studentlist li.pickable{cursor:pointer;border-radius:6px;}
+  .pairs-col .studentlist li.pickable:hover{background:#eef2ff;}
+  .pairs-col .studentlist li.picked-a{background:#dbe8ff;font-weight:600;}
+  .pairs-col .studentlist li.blocked{opacity:.4;}
+  .pairs-col .studentlist li .avail{font-size:11px;color:var(--muted);margin-left:auto;}
+  .lock-overlay{position:fixed;inset:0;background:#0f172a;z-index:2000;display:flex;align-items:center;justify-content:center;}
+  .lock-overlay.hidden{display:none;}
+  .lock-card{background:#fff;border-radius:12px;padding:32px;width:320px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.35);}
+  .lock-card h1{font-size:18px;margin-bottom:6px;}
+  .lock-card .hint{margin-bottom:4px;}
+  .lock-card input{width:100%;font-size:26px;text-align:center;letter-spacing:10px;padding:10px;margin:14px 0 6px;border:1px solid var(--border);border-radius:8px;}
+  .pin-error{color:var(--danger);font-size:12px;margin-bottom:10px;}
+  .lock-card button{width:100%;margin-top:8px;}
   @media print{
     body.presenting > header, body.presenting > .main, body.presenting > footer{display:none !important;}
     body.presenting .present-bar{display:none !important;}
@@ -87,6 +105,16 @@
 </style>
 </head>
 <body>
+<div class="lock-overlay" id="lockOverlay">
+  <div class="lock-card">
+    <h1>Seating Plan Generator</h1>
+    <p class="hint">Enter the teacher PIN to edit rosters, proximity rules, and seating.</p>
+    <input type="password" id="pinInput" inputmode="numeric" maxlength="4" placeholder="••••" autocomplete="off">
+    <div id="pinError" class="pin-error" style="display:none;">Incorrect PIN</div>
+    <button id="unlockBtn" class="primary">Unlock Teacher Mode</button>
+    <button id="viewOnlyBtn">View Seating Chart Only</button>
+  </div>
+</div>
 <header>
   <h1>Seating Plan Generator</h1>
   <div class="tabs" id="classTabs"></div>
@@ -95,6 +123,7 @@
       <button id="exportBtn">Export JSON</button>
       <button id="importBtn">Import JSON</button>
       <input type="file" id="importFile" accept="application/json" style="display:none;">
+      <button id="lockBtn">🔒 Lock</button>
     </div>
   </div>
 </header>
@@ -146,6 +175,7 @@
       <h2>Pairing Assistant</h2>
       <div class="hint">Click 🎲 next to a student to randomly pick an eligible partner and seat them together.</div>
       <div id="pairAssistList"></div>
+      <button id="openPairsScreenBtn" class="primary" style="width:100%;margin-top:10px;">👥 Open Pairing Screen</button>
     </div>
   </div>
 
@@ -195,6 +225,25 @@
   </div>
 </div>
 
+<div class="present-overlay" id="pairsOverlay">
+  <div class="present-bar">
+    <strong>Pairing Screen</strong>
+    <span class="hint" id="pairsHint">Pick a student, then click who they should be paired with.</span>
+    <span style="margin-left:auto;"></span>
+    <button id="pairsCloseBtn">✕ Close</button>
+  </div>
+  <div class="pairs-body">
+    <div class="pairs-col">
+      <h2>1. Pick a student</h2>
+      <ul class="studentlist" id="pairsRosterList"></ul>
+    </div>
+    <div class="pairs-col">
+      <h2 id="pairsCandidateTitle">2. Pick their partner</h2>
+      <ul class="studentlist" id="pairsCandidateList"></ul>
+    </div>
+  </div>
+</div>
+
 <script>
 (function(){
 "use strict";
@@ -202,9 +251,9 @@
 const SVG_NS = "http://www.w3.org/2000/svg";
 const STORAGE_KEY = "seatingPlanGenerator.v2";
 const ADJ_THRESHOLD = 95; // px: seats within this distance (or on same table) count as "close"
-const SEAT_R = 18;
-const SEAT_OFFSET = 17;
-const ROOM_W = 1000, ROOM_H = 640;
+const SEAT_R = 22;
+const SEAT_OFFSET = 20;
+const BASE_ROOM_W = 1000, BASE_ROOM_H = 640;
 
 // ---------- state ----------
 let db = loadDB();
@@ -213,6 +262,31 @@ let editRoomMode = false;
 let selectedTableId = null;
 let selectedWallId = null;
 let drag = null; // {type:'table'|'rotate'|'wall', ...}
+// the visible viewBox, recomputed to fit content on every full render() so the room can
+// grow (or shrink back) without limit while the app zooms to keep everything in frame
+let currentViewBox = { x:0, y:0, w:BASE_ROOM_W, h:BASE_ROOM_H };
+
+function computeRoomBounds(cls){
+  let minX=0, minY=0, maxX=BASE_ROOM_W, maxY=BASE_ROOM_H;
+  for(const w of cls.walls){
+    minX=Math.min(minX,w.x); minY=Math.min(minY,w.y);
+    maxX=Math.max(maxX,w.x+w.w); maxY=Math.max(maxY,w.y+w.h);
+  }
+  for(const t of cls.tables){
+    const r = Math.max(t.w,t.h)/2 + 40;
+    minX=Math.min(minX,t.x-r); minY=Math.min(minY,t.y-r);
+    maxX=Math.max(maxX,t.x+r); maxY=Math.max(maxY,t.y+r);
+  }
+  return {minX,minY,maxX,maxY};
+}
+function computeFitViewBox(cls){
+  const b = computeRoomBounds(cls);
+  const pad = 60;
+  const x = b.minX - pad, y = b.minY - pad;
+  const w = Math.max(b.maxX - b.minX + pad*2, 560);
+  const h = Math.max(b.maxY - b.minY + pad*2, 360);
+  return { x, y, w, h };
+}
 
 function uid(){ return 'id' + Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
 
@@ -302,7 +376,7 @@ function rectSeatSlots(t){
   const w=t.w, h=t.h;
   const edges = t.seatEdges || [0,1];
   const n = t.seatsPerEdge || 2;
-  const margin = Math.min(w*0.18, 24);
+  const margin = Math.min(w*0.18, 28);
   const slots = [];
   for(const side of edges){
     const y = side===0 ? -h/2-SEAT_OFFSET : h/2+SEAT_OFFSET;
@@ -537,15 +611,8 @@ function generatePairSeating(cls){
   if(bestScore2 >= 1000 || bestPScore >= 1000) alert("Could not satisfy all red (never-sit-close) rules with the current layout — placed the best possible arrangement, please review the highlighted seating.");
 }
 
-function autoPairStudent(cls, stu){
-  if(isSeated(cls, stu.id)) return;
-  const partners = cls.students.filter(s => s.id !== stu.id && !isSeated(cls, s.id) &&
-    cls.relationships[relKey(stu.id, s.id)] !== 'red');
-  if(!partners.length){ alert(`No available partners for ${stu.name}.`); return; }
-  const nonYellow = partners.filter(p => cls.relationships[relKey(stu.id,p.id)] !== 'yellow');
-  const pool = nonYellow.length ? nonYellow : partners;
-  const partner = pool[Math.floor(Math.random()*pool.length)];
-
+// Finds an empty pair of adjacent seats and seats (a,b) there. Returns false if none free.
+function seatPairInFreeSlot(cls, a, b){
   const seats = allSeatsWithWorld(cls);
   const adj = buildAdjacency(cls, seats);
   const emptyIds = new Set(seats.filter(s => !getAssignment(cls, s.id)).map(s=>s.id));
@@ -560,11 +627,23 @@ function autoPairStudent(cls, stu){
       candidates.push([id,nb]);
     }
   }
-  if(!candidates.length){ alert("No empty adjacent seats available to place this pair."); return; }
+  if(!candidates.length) return false;
   const [s1,s2] = candidates[Math.floor(Math.random()*candidates.length)];
-  setAssignment(cls, s1, stu.id);
-  setAssignment(cls, s2, partner.id);
-  render();
+  setAssignment(cls, s1, a.id);
+  setAssignment(cls, s2, b.id);
+  return true;
+}
+
+function autoPairStudent(cls, stu){
+  if(isSeated(cls, stu.id)) return;
+  const partners = cls.students.filter(s => s.id !== stu.id && !isSeated(cls, s.id) &&
+    cls.relationships[relKey(stu.id, s.id)] !== 'red');
+  if(!partners.length){ alert(`No available partners for ${stu.name}.`); return; }
+  const nonYellow = partners.filter(p => cls.relationships[relKey(stu.id,p.id)] !== 'yellow');
+  const pool = nonYellow.length ? nonYellow : partners;
+  const partner = pool[Math.floor(Math.random()*pool.length)];
+  if(!seatPairInFreeSlot(cls, stu, partner)){ alert("No empty adjacent seats available to place this pair."); return; }
+  saveDB(); render();
 }
 
 // ---------- rendering ----------
@@ -698,9 +777,12 @@ function renderPairAssist(cls){
 function renderCanvas(cls){
   svg.innerHTML = '';
   addCarpetDefs(svg, 'carpetPattern');
-  const bg = el('rect', {x:0,y:0,width:1000,height:640,fill:'url(#carpetPattern)', 'data-role':'canvas-bg'}, svg);
-  for(let gx=0; gx<=1000; gx+=25) el('line', {x1:gx,y1:0,x2:gx,y2:640,class:'grid-line'}, svg);
-  for(let gy=0; gy<=640; gy+=25) el('line', {x1:0,y1:gy,x2:1000,y2:gy,class:'grid-line'}, svg);
+  const vb = currentViewBox;
+  svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+  const bg = el('rect', {x:vb.x,y:vb.y,width:vb.w,height:vb.h,fill:'url(#carpetPattern)', 'data-role':'canvas-bg'}, svg);
+  const gx0 = Math.floor(vb.x/25)*25, gy0 = Math.floor(vb.y/25)*25;
+  for(let gx=gx0; gx<=vb.x+vb.w; gx+=25) el('line', {x1:gx,y1:vb.y,x2:gx,y2:vb.y+vb.h,class:'grid-line'}, svg);
+  for(let gy=gy0; gy<=vb.y+vb.h; gy+=25) el('line', {x1:vb.x,y1:gy,x2:vb.x+vb.w,y2:gy,class:'grid-line'}, svg);
   el('rect', {x:20,y:6,width:960,height:18,fill:'#334155',rx:3,'pointer-events':'none'}, svg);
   el('text', {x:500,y:19,'text-anchor':'middle',fill:'#fff','font-size':10,'font-weight':'bold','pointer-events':'none'}, svg).textContent = 'WHITEBOARD / FRONT OF ROOM (authoring view — use Present for teacher/student orientation)';
 
@@ -742,14 +824,22 @@ function renderCanvas(cls){
 
 }
 
+// Shortened to "First L." on the room diagram (seats are cramped) — still tells
+// same-first-name students apart (e.g. "Hannah G." vs "Hannah B."), unlike bare initials.
+function seatDisplayName(name){
+  const parts = name.trim().split(/\s+/);
+  if(parts.length < 2) return parts[0] || name;
+  return `${parts[0]} ${parts[parts.length-1][0]}.`;
+}
 function fitSeatLabel(name, scale){
   scale = scale || 1;
-  const n = name.length;
-  let size = 10;
-  if(n>12) size=7;
-  else if(n>9) size=8;
-  else if(n>6) size=9;
-  return { text: name, size: size*scale };
+  const text = seatDisplayName(name);
+  const n = text.length;
+  let size = 12;
+  if(n>14) size=9;
+  else if(n>10) size=10;
+  else if(n>7) size=11;
+  return { text, size: size*scale };
 }
 function escapeHtml(s){
   return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -766,6 +856,7 @@ function render(){
   renderClassTabs();
   renderStudents(cls);
   renderPairAssist(cls);
+  currentViewBox = computeFitViewBox(cls);
   renderCanvas(cls);
   updateSelectedTableBar(cls);
   document.getElementById('modeGroupBtn').classList.toggle('active', cls.mode==='group');
@@ -924,9 +1015,9 @@ function addTable(shape, seatEdges, seatsPerEdge, w, h){
   cls.tables.push({ id:uid(), shape, seatEdges, seatsPerEdge, w, h, x: 200+Math.random()*200, y: 240+Math.random()*150, rot:0 });
   saveDB(); render();
 }
-document.getElementById('addRectGroupBtn').onclick = () => addTable('rect', [0,1], 2, 190, 90);
-document.getElementById('addRectPairBtn').onclick = () => addTable('rect', [1], 2, 150, 70);
-document.getElementById('addOctaHalfBtn').onclick = () => addTable('octaHalf', null, null, 170, 90);
+document.getElementById('addRectGroupBtn').onclick = () => addTable('rect', [0,1], 2, 260, 100);
+document.getElementById('addRectPairBtn').onclick = () => addTable('rect', [1], 2, 220, 75);
+document.getElementById('addOctaHalfBtn').onclick = () => addTable('octaHalf', null, null, 230, 110);
 
 document.getElementById('rotCWBtn').onclick = () => {
   const cls = getClass();
@@ -962,6 +1053,7 @@ function openPresent(){
 function closePresent(){
   document.body.classList.remove('presenting');
   document.getElementById('presentOverlay').classList.remove('open');
+  if(!isUnlocked()) showLock();
 }
 function renderPresent(){
   const cls = getClass();
@@ -974,19 +1066,23 @@ function renderPresent(){
 
   presentSvg.innerHTML = '';
   addCarpetDefs(presentSvg, 'carpetPatternPresent');
+  const pvb = computeFitViewBox(cls);
+  presentSvg.setAttribute('viewBox', `${pvb.x} ${pvb.y} ${pvb.w} ${pvb.h}`);
+  const cx = pvb.x + pvb.w/2, cy = pvb.y + pvb.h/2;
   const flip = presentView === 'teacher';
-  const fx = (x) => flip ? ROOM_W - x : x;
-  const fy = (y) => flip ? ROOM_H - y : y;
+  const fx = (x) => flip ? 2*cx - x : x;
+  const fy = (y) => flip ? 2*cy - y : y;
   const frot = (r) => flip ? r + 180 : r;
 
-  el('rect', {x:0,y:0,width:ROOM_W,height:ROOM_H,fill:'url(#carpetPatternPresent)'}, presentSvg);
-  const wbY = flip ? ROOM_H - 34 : 10;
-  el('rect', {x:20,y:wbY,width:960,height:24,fill:'#334155',rx:4}, presentSvg);
-  el('text', {x:500,y:wbY+16,'text-anchor':'middle',fill:'#fff','font-size':13,'font-weight':'bold'}, presentSvg).textContent = 'WHITEBOARD / FRONT OF ROOM';
+  el('rect', {x:pvb.x,y:pvb.y,width:pvb.w,height:pvb.h,fill:'url(#carpetPatternPresent)'}, presentSvg);
+  const wbX = flip ? 2*cx - 980 : 20;
+  const wbY = flip ? 2*cy - 30 : 6;
+  el('rect', {x:wbX,y:wbY,width:960,height:24,fill:'#334155',rx:4}, presentSvg);
+  el('text', {x:wbX+480,y:wbY+16,'text-anchor':'middle',fill:'#fff','font-size':13,'font-weight':'bold'}, presentSvg).textContent = 'WHITEBOARD / FRONT OF ROOM';
 
   for(const w of cls.walls){
-    const nx = flip ? ROOM_W - (w.x+w.w) : w.x;
-    const ny = flip ? ROOM_H - (w.y+w.h) : w.y;
+    const nx = flip ? 2*cx - (w.x+w.w) : w.x;
+    const ny = flip ? 2*cy - (w.y+w.h) : w.y;
     el('rect', {x:nx,y:ny,width:w.w,height:w.h,class:'wall-rect'}, presentSvg);
   }
 
@@ -998,15 +1094,101 @@ function renderPresent(){
     for(const slot of seatLocalSlots(t)){
       const studentId = getAssignment(cls, slot.id);
       const student = studentId ? cls.students.find(s=>s.id===studentId) : null;
-      el('circle', {cx:slot.x, cy:slot.y, r:26, class:'seat'+(student?' filled':'')}, g);
+      el('circle', {cx:slot.x, cy:slot.y, r:30, class:'seat'+(student?' filled':'')}, g);
       if(student){
         const tg = el('g', {transform:`translate(${slot.x},${slot.y}) rotate(${-trot})`}, g);
-        const lbl = fitSeatLabel(student.name, 1.9);
+        const lbl = fitSeatLabel(student.name, 1.5);
         el('text', {x:0, y:5, class:'seat-label', style:`font-size:${lbl.size}px;font-weight:600;`}, tg).textContent = lbl.text;
       }
     }
   }
 }
+
+// ---------- dedicated pairs screen ----------
+let pairsSelectedId = null;
+
+function openPairs(){
+  pairsSelectedId = null;
+  document.getElementById('pairsOverlay').classList.add('open');
+  renderPairsScreen();
+}
+function closePairs(){
+  document.getElementById('pairsOverlay').classList.remove('open');
+}
+function renderPairsScreen(){
+  const cls = getClass();
+  const rosterList = document.getElementById('pairsRosterList');
+  rosterList.innerHTML = '';
+  for(const s of cls.students){
+    const seated = isSeated(cls, s.id);
+    const li = document.createElement('li');
+    li.className = (s.id===pairsSelectedId ? 'picked-a ' : '') + (seated ? '' : 'pickable');
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'name'; nameSpan.textContent = s.name;
+    li.appendChild(nameSpan);
+    const tag = document.createElement('span');
+    tag.className = 'avail'; tag.textContent = seated ? 'seated' : '';
+    li.appendChild(tag);
+    if(!seated) li.onclick = () => { pairsSelectedId = s.id; renderPairsScreen(); };
+    rosterList.appendChild(li);
+  }
+
+  const candTitle = document.getElementById('pairsCandidateTitle');
+  const candList = document.getElementById('pairsCandidateList');
+  candList.innerHTML = '';
+  const stu = cls.students.find(s=>s.id===pairsSelectedId);
+  if(!stu || isSeated(cls, stu.id)){
+    pairsSelectedId = null;
+    candTitle.textContent = 'Pick a student on the left to choose their partner';
+    return;
+  }
+  candTitle.textContent = `Choose a partner for ${stu.name}`;
+  const others = cls.students.filter(o => o.id !== stu.id && !isSeated(cls, o.id));
+  if(!others.length){
+    const li = document.createElement('li');
+    li.textContent = 'No unseated students left to pair with.';
+    candList.appendChild(li);
+    return;
+  }
+  for(const other of others){
+    const rel = cls.relationships[relKey(stu.id, other.id)];
+    const li = document.createElement('li');
+    const dot = document.createElement('span');
+    dot.className = 'dot' + (rel ? ' '+rel : '');
+    if(!rel) dot.style.background = '#cbd5e1';
+    li.appendChild(dot);
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'name'; nameSpan.textContent = other.name;
+    li.appendChild(nameSpan);
+    if(rel === 'red'){
+      li.className = 'blocked';
+      const tag = document.createElement('span');
+      tag.className = 'avail'; tag.textContent = 'blocked (red)';
+      li.appendChild(tag);
+    } else {
+      li.className = 'pickable';
+      if(rel === 'yellow'){
+        const tag = document.createElement('span');
+        tag.className = 'avail'; tag.textContent = 'caution (yellow)';
+        li.appendChild(tag);
+      }
+      li.onclick = () => {
+        if(!seatPairInFreeSlot(cls, stu, other)){
+          alert('No empty adjacent seats available for this pair. Add another table or clear seats.');
+          return;
+        }
+        saveDB();
+        pairsSelectedId = null;
+        renderPairsScreen();
+        render();
+      };
+    }
+    candList.appendChild(li);
+  }
+}
+
+document.getElementById('openPairsScreenBtn').onclick = openPairs;
+document.getElementById('pairsCloseBtn').onclick = closePairs;
 
 document.getElementById('presentBtn').onclick = openPresent;
 document.getElementById('presentCloseBtn').onclick = closePresent;
@@ -1038,6 +1220,34 @@ document.getElementById('importFile').onchange = (e) => {
   reader.readAsText(file);
   e.target.value = '';
 };
+
+// ---------- teacher-mode PIN lock ----------
+const TEACHER_PIN = '5157';
+function isUnlocked(){ return sessionStorage.getItem('spg_unlocked') === '1'; }
+function showLock(){ document.getElementById('lockOverlay').classList.remove('hidden'); }
+function hideLock(){ document.getElementById('lockOverlay').classList.add('hidden'); }
+function tryUnlock(){
+  const input = document.getElementById('pinInput');
+  if(input.value === TEACHER_PIN){
+    sessionStorage.setItem('spg_unlocked', '1');
+    hideLock();
+    input.value = '';
+    document.getElementById('pinError').style.display = 'none';
+  } else {
+    document.getElementById('pinError').style.display = '';
+    input.value = '';
+    input.focus();
+  }
+}
+document.getElementById('unlockBtn').onclick = tryUnlock;
+document.getElementById('pinInput').addEventListener('keydown', (e) => { if(e.key === 'Enter') tryUnlock(); });
+document.getElementById('viewOnlyBtn').onclick = () => { hideLock(); openPresent(); };
+document.getElementById('lockBtn').onclick = () => {
+  sessionStorage.removeItem('spg_unlocked');
+  closePairs();
+  closePresent();
+};
+if(isUnlocked()) hideLock(); else showLock();
 
 render();
 })();
