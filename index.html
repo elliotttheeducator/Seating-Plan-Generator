@@ -192,6 +192,13 @@
     <div class="panel toolbar">
       <button id="editRoomBtn">🏫 Draw Room Shape</button>
       <span class="hint" id="roomHint" style="display:none;">Drag on empty canvas to add a wall block. Click a block then Delete to remove it.</span>
+      <span class="row" style="gap:4px;">
+        <span class="hint">Room size (cm):</span>
+        <input type="number" id="roomWInput" placeholder="W" style="width:64px;" min="1">
+        <span class="hint">×</span>
+        <input type="number" id="roomDInput" placeholder="D" style="width:64px;" min="1">
+        <button id="setRoomSizeBtn" class="small">Set Room Size</button>
+      </span>
       <div class="sep"></div>
       <button id="addRectGroupBtn">+ Rect Group Table (4)</button>
       <button id="addRectPairBtn">+ Rect Pair Desk (2, same side)</button>
@@ -199,7 +206,10 @@
       <button id="addDoorBtn">+ Door</button>
       <div class="sep"></div>
       <span class="row" id="selectedTableBar" style="display:none;">
-        <span class="hint">Selected table:</span>
+        <span class="hint">Selected table (cm):</span>
+        <input type="number" id="tableWInput" style="width:58px;" min="1">
+        <span class="hint">×</span>
+        <input type="number" id="tableHInput" style="width:58px;" min="1">
         <select id="rotStepSelect">
           <option value="45">45°</option>
           <option value="22.5">22.5°</option>
@@ -260,9 +270,12 @@
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const STORAGE_KEY = "seatingPlanGenerator.v3";
-const ADJ_THRESHOLD = 95; // px: seats within this distance (or on same table) count as "close"
-const SEAT_R = 22;
-const SEAT_OFFSET = 20;
+// Units are cm throughout, so entered/displayed dimensions (room size, table size) are real
+// classroom measurements — e.g. a standard 120x61cm rectangle desk is just "120" x "61".
+const ADJ_THRESHOLD = 95; // cm: seats within this distance (or on same table) count as "close"
+const SEAT_R = 16;
+const SEAT_OFFSET = 16;
+const DOOR_LEN = 85;
 const BASE_ROOM_W = 1000, BASE_ROOM_H = 640;
 
 // ---------- state ----------
@@ -289,8 +302,9 @@ function computeRoomBounds(cls){
     maxX=Math.max(maxX,t.x+r); maxY=Math.max(maxY,t.y+r);
   }
   for(const d of (cls.doors||[])){
-    minX=Math.min(minX,d.x-70); minY=Math.min(minY,d.y-70);
-    maxX=Math.max(maxX,d.x+70); maxY=Math.max(maxY,d.y+70);
+    const r = DOOR_LEN + 15;
+    minX=Math.min(minX,d.x-r); minY=Math.min(minY,d.y-r);
+    maxX=Math.max(maxX,d.x+r); maxY=Math.max(maxY,d.y+r);
   }
   return {minX,minY,maxX,maxY};
 }
@@ -390,7 +404,7 @@ function rectSeatSlots(t){
   const w=t.w, h=t.h;
   const edges = t.seatEdges || [0,1];
   const n = t.seatsPerEdge || 2;
-  const margin = Math.min(w*0.18, 28);
+  const margin = Math.min(w*0.12, 20);
   const slots = [];
   for(const side of edges){
     const y = side===0 ? -h/2-SEAT_OFFSET : h/2+SEAT_OFFSET;
@@ -813,14 +827,14 @@ function renderCanvas(cls){
 
   for(const d of (cls.doors||[])){
     const g = el('g', {transform:`translate(${d.x},${d.y}) rotate(${d.rot})`}, svg);
-    el('line', {x1:0,y1:-6,x2:0,y2:62, stroke:'transparent', 'stroke-width':22, 'data-role':'door-body','data-id':d.id}, g);
-    el('path', {d:'M0,56 A56,56 0 0 1 56,0', fill:'none', stroke:'#8b5e34', 'stroke-width':1.5, 'stroke-dasharray':'4,4', opacity:.6, 'pointer-events':'none'}, g);
-    el('line', {x1:0,y1:0,x2:0,y2:56, stroke:'#8b5e34', 'stroke-width':5, 'stroke-linecap':'round', 'pointer-events':'none'}, g);
+    el('line', {x1:0,y1:-6,x2:0,y2:DOOR_LEN+6, stroke:'transparent', 'stroke-width':22, 'data-role':'door-body','data-id':d.id}, g);
+    el('path', {d:`M0,${DOOR_LEN} A${DOOR_LEN},${DOOR_LEN} 0 0 1 ${DOOR_LEN},0`, fill:'none', stroke:'#8b5e34', 'stroke-width':1.5, 'stroke-dasharray':'4,4', opacity:.6, 'pointer-events':'none'}, g);
+    el('line', {x1:0,y1:0,x2:0,y2:DOOR_LEN, stroke:'#8b5e34', 'stroke-width':5, 'stroke-linecap':'round', 'pointer-events':'none'}, g);
     el('circle', {cx:0,cy:0,r:5, fill:'#8b5e34', 'pointer-events':'none'}, g);
     if(d.id===selectedDoorId){
       el('circle', {cx:0,cy:0,r:9,fill:'none',stroke:'var(--accent)','stroke-width':2,'pointer-events':'none'}, g);
-      const hy = 82;
-      el('line', {x1:0,y1:56,x2:0,y2:hy, class:'rotate-line'}, g);
+      const hy = DOOR_LEN + 26;
+      el('line', {x1:0,y1:DOOR_LEN,x2:0,y2:hy, class:'rotate-line'}, g);
       el('circle', {cx:0, cy:hy, r:8, class:'rotate-handle', 'data-role':'door-rotate-handle','data-id':d.id}, g);
     }
   }
@@ -875,6 +889,23 @@ function escapeHtml(s){
 function updateSelectedTableBar(cls){
   const bar = document.getElementById('selectedTableBar');
   bar.style.display = selectedTableId ? '' : 'none';
+  if(!selectedTableId) return;
+  const t = cls.tables.find(tt=>tt.id===selectedTableId);
+  if(!t) return;
+  const wI = document.getElementById('tableWInput'), hI = document.getElementById('tableHInput');
+  if(document.activeElement !== wI) wI.value = Math.round(t.w);
+  if(document.activeElement !== hI) hI.value = Math.round(t.h);
+}
+
+function syncRoomSizeInputs(cls){
+  const wI = document.getElementById('roomWInput'), dI = document.getElementById('roomDInput');
+  if(document.activeElement === wI || document.activeElement === dI) return;
+  if(cls.walls && cls.walls.length === 1){
+    wI.value = Math.round(cls.walls[0].w);
+    dI.value = Math.round(cls.walls[0].h);
+  } else {
+    wI.value = ''; dI.value = '';
+  }
 }
 
 function render(){
@@ -885,6 +916,7 @@ function render(){
   if(!cls) return;
   renderStudents(cls);
   renderPairAssist(cls);
+  syncRoomSizeInputs(cls);
   currentViewBox = computeFitViewBox(cls);
   renderCanvas(cls);
   updateSelectedTableBar(cls);
@@ -1087,13 +1119,37 @@ function addTable(shape, seatEdges, seatsPerEdge, w, h){
   cls.tables.push({ id:uid(), shape, seatEdges, seatsPerEdge, w, h, x: 200+Math.random()*200, y: 240+Math.random()*150, rot:0 });
   saveDB(); render();
 }
-document.getElementById('addRectGroupBtn').onclick = () => addTable('rect', [0,1], 2, 260, 100);
-document.getElementById('addRectPairBtn').onclick = () => addTable('rect', [1], 2, 220, 75);
-document.getElementById('addHexBtn').onclick = () => addTable('hex', null, null, 280, 110);
+document.getElementById('addRectGroupBtn').onclick = () => addTable('rect', [0,1], 2, 160, 80);
+document.getElementById('addRectPairBtn').onclick = () => addTable('rect', [1], 2, 120, 61);
+document.getElementById('addHexBtn').onclick = () => addTable('hex', null, null, 180, 90);
 document.getElementById('addDoorBtn').onclick = () => {
   const cls = getClass();
   if(!cls.doors) cls.doors = [];
   cls.doors.push({ id:uid(), x:60, y:320, rot:0 });
+  saveDB(); render();
+};
+
+document.getElementById('tableWInput').addEventListener('change', () => {
+  const cls = getClass();
+  const t = cls.tables.find(tt=>tt.id===selectedTableId);
+  if(!t) return;
+  const v = parseFloat(document.getElementById('tableWInput').value);
+  if(v > 0){ t.w = v; saveDB(); render(); }
+});
+document.getElementById('tableHInput').addEventListener('change', () => {
+  const cls = getClass();
+  const t = cls.tables.find(tt=>tt.id===selectedTableId);
+  if(!t) return;
+  const v = parseFloat(document.getElementById('tableHInput').value);
+  if(v > 0){ t.h = v; saveDB(); render(); }
+});
+
+document.getElementById('setRoomSizeBtn').onclick = () => {
+  const cls = getClass();
+  const w = parseFloat(document.getElementById('roomWInput').value);
+  const d = parseFloat(document.getElementById('roomDInput').value);
+  if(!(w > 0) || !(d > 0)){ alert('Enter a valid room width and depth (cm).'); return; }
+  cls.walls = [{ id: uid(), x: 0, y: 40, w, h: d }];
   saveDB(); render();
 };
 
@@ -1168,8 +1224,8 @@ function renderPresent(){
   for(const d of (cls.doors||[])){
     const dx = fx(d.x), dy = fy(d.y), drot = frot(d.rot);
     const g = el('g', {transform:`translate(${dx},${dy}) rotate(${drot})`}, presentSvg);
-    el('path', {d:'M0,56 A56,56 0 0 1 56,0', fill:'none', stroke:'#8b5e34', 'stroke-width':1.5, 'stroke-dasharray':'4,4', opacity:.6}, g);
-    el('line', {x1:0,y1:0,x2:0,y2:56, stroke:'#8b5e34', 'stroke-width':5, 'stroke-linecap':'round'}, g);
+    el('path', {d:`M0,${DOOR_LEN} A${DOOR_LEN},${DOOR_LEN} 0 0 1 ${DOOR_LEN},0`, fill:'none', stroke:'#8b5e34', 'stroke-width':1.5, 'stroke-dasharray':'4,4', opacity:.6}, g);
+    el('line', {x1:0,y1:0,x2:0,y2:DOOR_LEN, stroke:'#8b5e34', 'stroke-width':5, 'stroke-linecap':'round'}, g);
   }
 
   for(const t of cls.tables){
