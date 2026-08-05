@@ -96,6 +96,9 @@
   .lock-card input{width:100%;font-size:26px;text-align:center;letter-spacing:10px;padding:10px;margin:14px 0 6px;border:1px solid var(--border);border-radius:8px;}
   .pin-error{color:var(--danger);font-size:12px;margin-bottom:10px;}
   .lock-card button{width:100%;margin-top:8px;}
+  .empty-state{padding:100px 20px;text-align:center;}
+  .empty-card h2{font-size:16px;color:var(--text);margin:0 0 6px;}
+  .empty-card p{color:var(--muted);margin:0;}
   @media print{
     body.presenting > header, body.presenting > .main, body.presenting > footer{display:none !important;}
     body.presenting .present-bar{display:none !important;}
@@ -128,7 +131,13 @@
   </div>
 </header>
 
-<div class="main">
+<div class="empty-state" id="emptyState" style="display:none;">
+  <div class="empty-card">
+    <h2>No classes yet</h2>
+    <p>Click "+ Add Class" above to create your first class.</p>
+  </div>
+</div>
+<div class="main" id="mainArea">
   <div class="sidebar">
     <div class="panel" id="studentsPanel">
       <h2>Students</h2>
@@ -186,7 +195,8 @@
       <div class="sep"></div>
       <button id="addRectGroupBtn">+ Rect Group Table (4)</button>
       <button id="addRectPairBtn">+ Rect Pair Desk (2, same side)</button>
-      <button id="addOctaHalfBtn">+ Half-Octagon Table (3, joins to seat 6)</button>
+      <button id="addHexBtn">+ Hexagon Table (6)</button>
+      <button id="addDoorBtn">+ Door</button>
       <div class="sep"></div>
       <span class="row" id="selectedTableBar" style="display:none;">
         <span class="hint">Selected table:</span>
@@ -249,7 +259,7 @@
 "use strict";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const STORAGE_KEY = "seatingPlanGenerator.v2";
+const STORAGE_KEY = "seatingPlanGenerator.v3";
 const ADJ_THRESHOLD = 95; // px: seats within this distance (or on same table) count as "close"
 const SEAT_R = 22;
 const SEAT_OFFSET = 20;
@@ -261,7 +271,8 @@ let currentClassId = db.classes[0] ? db.classes[0].id : null;
 let editRoomMode = false;
 let selectedTableId = null;
 let selectedWallId = null;
-let drag = null; // {type:'table'|'rotate'|'wall', ...}
+let selectedDoorId = null;
+let drag = null; // {type:'table'|'rotate'|'wall'|'door'|'doorRotate'|'wall-draw', ...}
 // the visible viewBox, recomputed to fit content on every full render() so the room can
 // grow (or shrink back) without limit while the app zooms to keep everything in frame
 let currentViewBox = { x:0, y:0, w:BASE_ROOM_W, h:BASE_ROOM_H };
@@ -276,6 +287,10 @@ function computeRoomBounds(cls){
     const r = Math.max(t.w,t.h)/2 + 40;
     minX=Math.min(minX,t.x-r); minY=Math.min(minY,t.y-r);
     maxX=Math.max(maxX,t.x+r); maxY=Math.max(maxY,t.y+r);
+  }
+  for(const d of (cls.doors||[])){
+    minX=Math.min(minX,d.x-70); minY=Math.min(minY,d.y-70);
+    maxX=Math.max(maxX,d.x+70); maxY=Math.max(maxY,d.y+70);
   }
   return {minX,minY,maxX,maxY};
 }
@@ -294,7 +309,7 @@ function defaultClass(name){
   return {
     id: uid(), name: name || "Class 1",
     students: [], relationships: {}, mode: "group",
-    walls: [], tables: []
+    walls: [], tables: [], doors: []
   };
 }
 
@@ -303,10 +318,10 @@ function loadDB(){
     const raw = localStorage.getItem(STORAGE_KEY);
     if(raw){
       const parsed = JSON.parse(raw);
-      if(parsed && Array.isArray(parsed.classes) && parsed.classes.length) return parsed;
+      if(parsed && Array.isArray(parsed.classes)) return parsed;
     }
   }catch(e){ console.warn("Failed to load saved data", e); }
-  return { classes: [defaultClass("Class 1")] };
+  return { classes: [] };
 }
 function saveDB(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); }
 
@@ -327,22 +342,21 @@ function rotatePoint(x,y,rad){
 }
 
 // ---------- geometry ----------
-// octaHalf tables are literally half of an octagon: a flat "join" edge (top, in local
-// space) where two halves push together to form a full hexagon/octagon pod seating 6,
-// and a beveled outer edge (bottom) where its own 3 seats sit.
-function octaHalfLocalVerts(w,h){
-  const bevel = Math.min(w,h) * 0.4;
+// A single elongated hexagon table (both short ends pointed) — not two halves that need
+// joining. Seats sit on the two long edges plus one at each pointed end, 6 total.
+function hexLocalVerts(w,h){
+  const bevel = Math.min(w,h) * 0.3;
   return [
-    {x:-w/2, y:-h/2},
-    {x: w/2, y:-h/2},
-    {x: w/2, y: h/2-bevel},
+    {x:-w/2+bevel, y:-h/2},
+    {x: w/2-bevel, y:-h/2},
+    {x: w/2, y:0},
     {x: w/2-bevel, y: h/2},
     {x:-w/2+bevel, y: h/2},
-    {x:-w/2, y: h/2-bevel},
+    {x:-w/2, y:0},
   ];
 }
 function tableLocalVerts(t){
-  if(t.shape === 'octaHalf') return octaHalfLocalVerts(t.w, t.h);
+  if(t.shape === 'hex') return hexLocalVerts(t.w, t.h);
   const w=t.w, h=t.h;
   return [{x:-w/2,y:-h/2},{x:w/2,y:-h/2},{x:w/2,y:h/2},{x:-w/2,y:h/2}];
 }
@@ -369,7 +383,7 @@ function tableEdgesWorld(t){
   return edges;
 }
 function seatLocalSlots(t){
-  if(t.shape === 'octaHalf') return octaHalfSeatSlots(t);
+  if(t.shape === 'hex') return hexSeatSlots(t);
   return rectSeatSlots(t);
 }
 function rectSeatSlots(t){
@@ -388,22 +402,21 @@ function rectSeatSlots(t){
   }
   return slots;
 }
-// 3 seats along the octaHalf's beveled outer edge (skips the flat join edge), so two
-// halves snapped together at their join edge seat 6 total.
-function octaHalfSeatSlots(t){
-  const verts = octaHalfLocalVerts(t.w, t.h);
-  const outerEdgeIdx = [2, 3, 4]; // bevel-right, bottom, bevel-left
+// 2 seats on the top edge, 2 on the bottom edge, 1 at each pointed end = 6 total.
+function hexSeatSlots(t){
+  const w=t.w, h=t.h;
+  const margin = Math.min(w*0.16, 30);
   const slots = [];
-  for(let k=0; k<outerEdgeIdx.length; k++){
-    const i = outerEdgeIdx[k];
-    const a = verts[i], b = verts[(i+1)%verts.length];
-    const mx=(a.x+b.x)/2, my=(a.y+b.y)/2;
-    const dx=b.x-a.x, dy=b.y-a.y;
-    const len=Math.hypot(dx,dy) || 1;
-    let nx = dy/len, ny=-dx/len;
-    if(nx*(0-mx) + ny*(0-my) > 0){ nx=-nx; ny=-ny; }
-    slots.push({ id: t.id+'-o'+k, x: mx+nx*SEAT_OFFSET, y: my+ny*SEAT_OFFSET });
+  for(const side of [0,1]){
+    const y = side===0 ? -h/2-SEAT_OFFSET : h/2+SEAT_OFFSET;
+    for(let i=0;i<2;i++){
+      const frac = (i+0.5)/2;
+      const x = -w/2+margin + frac*(w-2*margin);
+      slots.push({ id: t.id+'-s'+side+'-'+i, x, y });
+    }
   }
+  slots.push({ id: t.id+'-pL', x: -w/2-SEAT_OFFSET, y: 0 });
+  slots.push({ id: t.id+'-pR', x: w/2+SEAT_OFFSET, y: 0 });
   return slots;
 }
 function seatWorldPos(t, slot){
@@ -798,6 +811,20 @@ function renderCanvas(cls){
     el('rect', {x:drag.rx,y:drag.ry,width:drag.rw,height:drag.rh,class:'wall-rect',opacity:.6}, svg);
   }
 
+  for(const d of (cls.doors||[])){
+    const g = el('g', {transform:`translate(${d.x},${d.y}) rotate(${d.rot})`}, svg);
+    el('line', {x1:0,y1:-6,x2:0,y2:62, stroke:'transparent', 'stroke-width':22, 'data-role':'door-body','data-id':d.id}, g);
+    el('path', {d:'M0,56 A56,56 0 0 1 56,0', fill:'none', stroke:'#8b5e34', 'stroke-width':1.5, 'stroke-dasharray':'4,4', opacity:.6, 'pointer-events':'none'}, g);
+    el('line', {x1:0,y1:0,x2:0,y2:56, stroke:'#8b5e34', 'stroke-width':5, 'stroke-linecap':'round', 'pointer-events':'none'}, g);
+    el('circle', {cx:0,cy:0,r:5, fill:'#8b5e34', 'pointer-events':'none'}, g);
+    if(d.id===selectedDoorId){
+      el('circle', {cx:0,cy:0,r:9,fill:'none',stroke:'var(--accent)','stroke-width':2,'pointer-events':'none'}, g);
+      const hy = 82;
+      el('line', {x1:0,y1:56,x2:0,y2:hy, class:'rotate-line'}, g);
+      el('circle', {cx:0, cy:hy, r:8, class:'rotate-handle', 'data-role':'door-rotate-handle','data-id':d.id}, g);
+    }
+  }
+
   for(const t of cls.tables){
     const g = el('g', {transform:`translate(${t.x},${t.y}) rotate(${t.rot})`, 'data-role':'table-body', 'data-id':t.id}, svg);
     const verts = tableLocalVerts(t).map(p=>`${p.x},${p.y}`).join(' ');
@@ -852,8 +879,10 @@ function updateSelectedTableBar(cls){
 
 function render(){
   const cls = getClass();
-  if(!cls) return;
   renderClassTabs();
+  document.getElementById('mainArea').style.display = cls ? '' : 'none';
+  document.getElementById('emptyState').style.display = cls ? 'none' : '';
+  if(!cls) return;
   renderStudents(cls);
   renderPairAssist(cls);
   currentViewBox = computeFitViewBox(cls);
@@ -866,6 +895,19 @@ function render(){
 }
 
 // ---------- interaction ----------
+// Grows the live viewBox (and zooms out) the instant a drag reaches near an edge, so you
+// never have to shrink a table to fit more room — the camera just backs off instead.
+function expandViewBoxToInclude(p){
+  const vb = currentViewBox;
+  const margin = 50;
+  let changed = false;
+  if(p.x > vb.x + vb.w - margin){ vb.w = (p.x - vb.x) + margin; changed = true; }
+  if(p.x < vb.x + margin){ const grow = (vb.x + margin) - p.x; vb.x -= grow; vb.w += grow; changed = true; }
+  if(p.y > vb.y + vb.h - margin){ vb.h = (p.y - vb.y) + margin; changed = true; }
+  if(p.y < vb.y + margin){ const grow = (vb.y + margin) - p.y; vb.y -= grow; vb.h += grow; changed = true; }
+  if(changed) svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+}
+
 function svgPoint(evt){
   const pt = svg.createSVGPoint();
   pt.x = evt.clientX; pt.y = evt.clientY;
@@ -882,8 +924,7 @@ svg.addEventListener('pointerdown', (e) => {
   const p = svgPoint(e);
 
   if(role === 'rotate-handle'){
-    const t = cls.tables.find(tt=>tt.id===id);
-    selectedTableId = id; selectedWallId=null;
+    selectedTableId = id; selectedWallId=null; selectedDoorId=null;
     drag = { type:'rotate', tableId:id };
     svg.setPointerCapture(e.pointerId);
     render();
@@ -891,18 +932,33 @@ svg.addEventListener('pointerdown', (e) => {
   }
   if(role === 'table-body'){
     const t = cls.tables.find(tt=>tt.id===id);
-    selectedTableId = id; selectedWallId = null;
+    selectedTableId = id; selectedWallId = null; selectedDoorId = null;
     drag = { type:'table', tableId:id, dx:t.x-p.x, dy:t.y-p.y };
     svg.setPointerCapture(e.pointerId);
     render();
     return;
   }
+  if(role === 'door-rotate-handle'){
+    selectedDoorId = id; selectedTableId=null; selectedWallId=null;
+    drag = { type:'doorRotate', doorId:id };
+    svg.setPointerCapture(e.pointerId);
+    render();
+    return;
+  }
+  if(role === 'door-body'){
+    const d = (cls.doors||[]).find(dd=>dd.id===id);
+    selectedDoorId = id; selectedTableId = null; selectedWallId = null;
+    drag = { type:'door', doorId:id, dx:d.x-p.x, dy:d.y-p.y };
+    svg.setPointerCapture(e.pointerId);
+    render();
+    return;
+  }
   if(role === 'wall'){
-    if(editRoomMode){ selectedWallId = id; selectedTableId=null; render(); }
+    if(editRoomMode){ selectedWallId = id; selectedTableId=null; selectedDoorId=null; render(); }
     return;
   }
   if(role === 'canvas-bg'){
-    selectedTableId = null; selectedWallId = null;
+    selectedTableId = null; selectedWallId = null; selectedDoorId = null;
     if(editRoomMode){
       drag = { type:'wall-draw', sx:p.x, sy:p.y, rx:p.x, ry:p.y, rw:0, rh:0 };
       svg.setPointerCapture(e.pointerId);
@@ -918,15 +974,27 @@ svg.addEventListener('pointermove', (e) => {
   if(drag.type === 'table'){
     const t = cls.tables.find(tt=>tt.id===drag.tableId);
     t.x = p.x + drag.dx; t.y = p.y + drag.dy;
+    expandViewBoxToInclude(p);
     renderCanvas(cls);
   } else if(drag.type === 'rotate'){
     const t = cls.tables.find(tt=>tt.id===drag.tableId);
     const angle = Math.atan2(p.y - t.y, p.x - t.x) * 180/Math.PI;
     t.rot = angle + 90;
     renderCanvas(cls);
+  } else if(drag.type === 'door'){
+    const d = (cls.doors||[]).find(dd=>dd.id===drag.doorId);
+    d.x = p.x + drag.dx; d.y = p.y + drag.dy;
+    expandViewBoxToInclude(p);
+    renderCanvas(cls);
+  } else if(drag.type === 'doorRotate'){
+    const d = (cls.doors||[]).find(dd=>dd.id===drag.doorId);
+    const angle = Math.atan2(p.y - d.y, p.x - d.x) * 180/Math.PI;
+    d.rot = angle + 90;
+    renderCanvas(cls);
   } else if(drag.type === 'wall-draw'){
     drag.rx = Math.min(drag.sx, p.x); drag.ry = Math.min(drag.sy, p.y);
     drag.rw = Math.abs(p.x - drag.sx); drag.rh = Math.abs(p.y - drag.sy);
+    expandViewBoxToInclude(p);
     renderCanvas(cls);
   }
 });
@@ -938,7 +1006,7 @@ svg.addEventListener('pointerup', (e) => {
     const t = cls.tables.find(tt=>tt.id===drag.tableId);
     trySnap(t, cls);
     saveDB();
-  } else if(drag.type === 'rotate'){
+  } else if(drag.type === 'rotate' || drag.type === 'door' || drag.type === 'doorRotate'){
     saveDB();
   } else if(drag.type === 'wall-draw'){
     if(drag.rw > 8 && drag.rh > 8){
@@ -954,6 +1022,7 @@ document.addEventListener('keydown', (e) => {
   if(e.key !== 'Delete' && e.key !== 'Backspace') return;
   if(document.activeElement && ['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
   const cls = getClass();
+  if(!cls) return;
   if(selectedTableId){
     cls.tables = cls.tables.filter(t=>t.id!==selectedTableId);
     if(cls.assignments) for(const k in cls.assignments) if(k.startsWith(selectedTableId+'-')) delete cls.assignments[k];
@@ -961,6 +1030,9 @@ document.addEventListener('keydown', (e) => {
   } else if(selectedWallId){
     cls.walls = cls.walls.filter(w=>w.id!==selectedWallId);
     selectedWallId = null; saveDB(); render();
+  } else if(selectedDoorId){
+    cls.doors = (cls.doors||[]).filter(d=>d.id!==selectedDoorId);
+    selectedDoorId = null; saveDB(); render();
   }
 });
 
@@ -1017,7 +1089,13 @@ function addTable(shape, seatEdges, seatsPerEdge, w, h){
 }
 document.getElementById('addRectGroupBtn').onclick = () => addTable('rect', [0,1], 2, 260, 100);
 document.getElementById('addRectPairBtn').onclick = () => addTable('rect', [1], 2, 220, 75);
-document.getElementById('addOctaHalfBtn').onclick = () => addTable('octaHalf', null, null, 230, 110);
+document.getElementById('addHexBtn').onclick = () => addTable('hex', null, null, 280, 110);
+document.getElementById('addDoorBtn').onclick = () => {
+  const cls = getClass();
+  if(!cls.doors) cls.doors = [];
+  cls.doors.push({ id:uid(), x:60, y:320, rot:0 });
+  saveDB(); render();
+};
 
 document.getElementById('rotCWBtn').onclick = () => {
   const cls = getClass();
@@ -1045,6 +1123,7 @@ let presentView = 'student';
 const presentSvg = document.getElementById('presentSvg');
 
 function openPresent(){
+  if(!getClass()){ alert('No classes yet — add a class first.'); return; }
   presentView = 'student';
   document.body.classList.add('presenting');
   document.getElementById('presentOverlay').classList.add('open');
@@ -1084,6 +1163,13 @@ function renderPresent(){
     const nx = flip ? 2*cx - (w.x+w.w) : w.x;
     const ny = flip ? 2*cy - (w.y+w.h) : w.y;
     el('rect', {x:nx,y:ny,width:w.w,height:w.h,class:'wall-rect'}, presentSvg);
+  }
+
+  for(const d of (cls.doors||[])){
+    const dx = fx(d.x), dy = fy(d.y), drot = frot(d.rot);
+    const g = el('g', {transform:`translate(${dx},${dy}) rotate(${drot})`}, presentSvg);
+    el('path', {d:'M0,56 A56,56 0 0 1 56,0', fill:'none', stroke:'#8b5e34', 'stroke-width':1.5, 'stroke-dasharray':'4,4', opacity:.6}, g);
+    el('line', {x1:0,y1:0,x2:0,y2:56, stroke:'#8b5e34', 'stroke-width':5, 'stroke-linecap':'round'}, g);
   }
 
   for(const t of cls.tables){
