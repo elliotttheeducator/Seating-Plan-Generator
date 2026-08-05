@@ -1009,7 +1009,7 @@ function fitSeatLabel(name, radius, firstNameCounts){
 // Draws a 1- or 2-line seat label centered in the given upright group, with a rounded
 // same-color-as-the-seat chip behind it sized to the actual rendered text. When the text
 // fits inside the seat circle the chip is invisible (same color, fully covered); when it
-// doesn't, the chip's edge is the only visible sign, matching the circle's own color/border.
+// doesn't, the borderless fill silently extends past the circle's own edge.
 function renderSeatLabel(parent, lbl, seatColor){
   const texts = [];
   if(lbl.lines.length === 1){
@@ -1032,7 +1032,7 @@ function renderSeatLabel(parent, lbl, seatColor){
   const pad = lbl.size*0.16;
   const chip = el('rect', {
     x:minX-pad, y:minY-pad, width:(maxX-minX)+pad*2, height:(maxY-minY)+pad*2,
-    rx:(maxY-minY)/2+pad, fill:seatColor, stroke:'var(--accent-dark)', 'stroke-width':1.5, 'pointer-events':'none'
+    rx:(maxY-minY)/2+pad, fill:seatColor, 'pointer-events':'none'
   });
   parent.insertBefore(chip, texts[0]);
 }
