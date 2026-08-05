@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Seating Plan Generator</title>
+<style>
+  :root{
+    --bg:#f4f6f9; --panel:#ffffff; --border:#d8dee6; --text:#1f2937; --muted:#6b7280;
+    --accent:#2563eb; --accent-dark:#1d4ed8; --red:#dc2626; --yellow:#d97706; --green:#16a34a;
+    --danger:#b91c1c;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);}
+  header{background:var(--panel);border-bottom:1px solid var(--border);padding:10px 16px;}
+  h1{font-size:18px;margin:0 0 8px 0;}
+  .tabs{display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+  .tab{padding:6px 12px;border-radius:6px 6px 0 0;background:#e9edf3;border:1px solid var(--border);border-bottom:none;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:6px;}
+  .tab.active{background:var(--panel);font-weight:600;color:var(--accent-dark);}
+  .tab .x{opacity:.5;padding:0 2px;}
+  .tab .x:hover{opacity:1;color:var(--danger);}
+  .tab-add{padding:6px 10px;border-radius:6px;border:1px dashed var(--border);cursor:pointer;background:transparent;font-size:13px;color:var(--muted);}
+  .hdr-actions{display:flex;gap:6px;margin-left:auto;}
+  .main{display:flex;gap:14px;padding:14px;align-items:flex-start;}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px;}
+  .sidebar{width:320px;flex:0 0 320px;display:flex;flex-direction:column;gap:12px;}
+  .center{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:0 0 8px 0;}
+  input[type=text], select{font-size:13px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--text);}
+  button{font-size:13px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:#f1f4f8;color:var(--text);cursor:pointer;}
+  button:hover{background:#e6ebf1;}
+  button.primary{background:var(--accent);border-color:var(--accent-dark);color:#fff;}
+  button.primary:hover{background:var(--accent-dark);}
+  button.danger{background:#fdecec;border-color:#f3b4b4;color:var(--danger);}
+  button.danger:hover{background:#fbdada;}
+  button:disabled{opacity:.45;cursor:not-allowed;}
+  button.small{padding:3px 7px;font-size:12px;}
+  .row{display:flex;gap:6px;align-items:center;}
+  .row.wrap{flex-wrap:wrap;}
+  .studentlist{list-style:none;margin:8px 0 0 0;padding:0;max-height:180px;overflow-y:auto;border-top:1px solid #eee;}
+  .studentlist li{display:flex;align-items:center;gap:6px;padding:5px 2px;border-bottom:1px solid #f0f2f5;font-size:13px;}
+  .studentlist li .name{flex:1;}
+  .studentlist li.seated .name{color:var(--muted);text-decoration:line-through;}
+  .dot{width:10px;height:10px;border-radius:50%;display:inline-block;flex:0 0 auto;}
+  .dot.red{background:var(--red);} .dot.yellow{background:var(--yellow);} .dot.green{background:var(--green);}
+  .rel-list{list-style:none;margin:8px 0 0;padding:0;max-height:140px;overflow-y:auto;}
+  .rel-list li{display:flex;align-items:center;gap:6px;font-size:12px;padding:4px 2px;border-bottom:1px solid #f0f2f5;}
+  .rel-list li span.names{flex:1;}
+  .mode-toggle{display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;}
+  .mode-toggle button{border:none;border-radius:0;flex:1;background:#f1f4f8;}
+  .mode-toggle button.active{background:var(--accent);color:#fff;}
+  .canvas-wrap{border:1px solid var(--border);border-radius:8px;background:#fbfcfe;overflow:auto;}
+  svg#canvas{display:block;background:
+    linear-gradient(#fff,#fff);
+    cursor:default;}
+  svg#canvas .grid-line{stroke:#eef1f5;stroke-width:1;pointer-events:none;}
+  .wall-rect{fill:#e7ecf3;stroke:#a9b6c6;stroke-width:2;}
+  .wall-rect.selected{stroke:var(--accent);stroke-width:3;}
+  .table-shape{fill:#fff6e0;stroke:#c69214;stroke-width:2;cursor:grab;}
+  .table-shape.selected{stroke:var(--accent);stroke-width:3;}
+  .seat{fill:#fff;stroke:#8a94a3;stroke-width:1.5;cursor:default;}
+  .seat.filled{fill:#dbe8ff;stroke:var(--accent-dark);}
+  .seat-label{font-size:10px;fill:#1f2937;text-anchor:middle;pointer-events:none;}
+  .rotate-handle{fill:#fff;stroke:var(--accent-dark);stroke-width:2;cursor:grab;}
+  .rotate-line{stroke:var(--accent-dark);stroke-width:1.5;pointer-events:none;}
+  .seat-label{pointer-events:none;}
+  .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .toolbar .sep{width:1px;height:22px;background:var(--border);}
+  .hint{font-size:12px;color:var(--muted);}
+  .partner-row{display:flex;align-items:center;gap:6px;font-size:13px;padding:5px 2px;border-bottom:1px solid #f0f2f5;}
+  .partner-row .name{flex:1;}
+  .partner-row .avail{font-size:11px;color:var(--muted);}
+  small.field-label{display:block;font-size:11px;color:var(--muted);margin-bottom:2px;}
+  footer{padding:6px 16px;font-size:11px;color:var(--muted);}
+</style>
+</head>
+<body>
+<header>
+  <h1>Seating Plan Generator</h1>
+  <div class="tabs" id="classTabs"></div>
+  <div class="row" style="margin-top:6px;">
+    <div class="hdr-actions row">
+      <button id="exportBtn">Export JSON</button>
+      <button id="importBtn">Import JSON</button>
+      <input type="file" id="importFile" accept="application/json" style="display:none;">
+    </div>
+  </div>
+</header>
+
+<div class="main">
+  <div class="sidebar">
+    <div class="panel" id="studentsPanel">
+      <h2>Students</h2>
+      <div class="row">
+        <input type="text" id="studentInput" placeholder="Student name" style="flex:1;">
+        <button id="addStudentBtn" class="primary">Add</button>
+      </div>
+      <div class="hint">Tip: paste multiple names separated by commas or new lines, then Add.</div>
+      <ul class="studentlist" id="studentList"></ul>
+    </div>
+
+    <div class="panel" id="relPanel">
+      <h2>Proximity Rules</h2>
+      <small class="field-label">Red = never sit close &nbsp;·&nbsp; Yellow = avoid if possible &nbsp;·&nbsp; Green = fine together</small>
+      <div class="row wrap" style="margin-top:6px;">
+        <select id="relA"></select>
+        <select id="relB"></select>
+        <select id="relColor">
+          <option value="red">Red</option>
+          <option value="yellow">Yellow</option>
+          <option value="green">Green</option>
+        </select>
+        <button id="addRelBtn" class="primary">Set</button>
+      </div>
+      <ul class="rel-list" id="relList"></ul>
+    </div>
+
+    <div class="panel">
+      <h2>Mode</h2>
+      <div class="mode-toggle">
+        <button id="modeGroupBtn">Group Tables</button>
+        <button id="modePairBtn">Pair Up</button>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button id="generateBtn" class="primary" style="flex:1;">🎲 Generate Seating</button>
+      </div>
+      <div class="row" style="margin-top:6px;">
+        <button id="clearSeatsBtn" style="flex:1;">Clear Seats</button>
+      </div>
+      <div class="hint" id="capacityHint" style="margin-top:6px;"></div>
+    </div>
+
+    <div class="panel" id="pairAssistPanel" style="display:none;">
+      <h2>Pairing Assistant</h2>
+      <div class="hint">Click 🎲 next to a student to randomly pick an eligible partner and seat them together.</div>
+      <div id="pairAssistList"></div>
+    </div>
+  </div>
+
+  <div class="center">
+    <div class="panel toolbar">
+      <button id="editRoomBtn">🏫 Draw Room Shape</button>
+      <span class="hint" id="roomHint" style="display:none;">Drag on empty canvas to add a wall block. Click a block then Delete to remove it.</span>
+      <div class="sep"></div>
+      <button id="addRectGroupBtn">+ Rect Group Table (4)</button>
+      <button id="addRectPairBtn">+ Rect Pair Desk (2)</button>
+      <button id="addHexGroupBtn">+ Octagon Group Table (4)</button>
+      <button id="addHexPairBtn">+ Octagon Pair Desk (2)</button>
+      <div class="sep"></div>
+      <span class="row" id="selectedTableBar" style="display:none;">
+        <span class="hint">Selected table:</span>
+        <select id="rotStepSelect">
+          <option value="45">45°</option>
+          <option value="22.5">22.5°</option>
+        </select>
+        <button id="rotCCWBtn" class="small">⟲</button>
+        <button id="rotCWBtn" class="small">⟳</button>
+        <button id="deleteTableBtn" class="small danger">Delete</button>
+      </span>
+    </div>
+    <div class="canvas-wrap">
+      <svg id="canvas" width="1000" height="640" viewBox="0 0 1000 640"></svg>
+    </div>
+  </div>
+</div>
+<footer>Data is saved automatically in this browser. Use Export/Import to move a plan between computers.</footer>
+
+<script>
+(function(){
+"use strict";
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const STORAGE_KEY = "seatingPlanGenerator.v1";
+const ADJ_THRESHOLD = 95; // px: seats within this distance (or on same table) count as "close"
+
+// ---------- state ----------
+let db = loadDB();
+let currentClassId = db.classes[0] ? db.classes[0].id : null;
+let editRoomMode = false;
+let selectedTableId = null;
+let selectedWallId = null;
+let drag = null; // {type:'table'|'rotate'|'wall', ...}
+
+function uid(){ return 'id' + Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+
+function defaultClass(name){
+  return {
+    id: uid(), name: name || "Class 1",
+    students: [], relationships: {}, mode: "group",
+    walls: [], tables: []
+  };
+}
+
+function loadDB(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(raw){
+      const parsed = JSON.parse(raw);
+      if(parsed && Array.isArray(parsed.classes) && parsed.classes.length) return parsed;
+    }
+  }catch(e){ console.warn("Failed to load saved data", e); }
+  return { classes: [defaultClass("Class 1")] };
+}
+function saveDB(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); }
+
+function getClass(){ return db.classes.find(c => c.id === currentClassId) || db.classes[0]; }
+function relKey(a,b){ return [a,b].sort().join('|'); }
+function shuffle(arr){
+  const a = arr.slice();
+  for(let i=a.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [a[i],a[j]] = [a[j],a[i]];
+  }
+  return a;
+}
+function deg2rad(d){ return d * Math.PI/180; }
+function rotatePoint(x,y,rad){
+  const c = Math.cos(rad), s = Math.sin(rad);
+  return { x: x*c - y*s, y: x*s + y*c };
+}
+
+// ---------- geometry ----------
+function tableLocalVerts(t){
+  const w=t.w, h=t.h;
+  if(t.shape === 'rect'){
+    return [{x:-w/2,y:-h/2},{x:w/2,y:-h/2},{x:w/2,y:h/2},{x:-w/2,y:h/2}];
+  }
+  const bevel = Math.min(w,h) * 0.28;
+  return [
+    {x:-w/2+bevel, y:-h/2},
+    {x: w/2-bevel, y:-h/2},
+    {x: w/2, y:-h/2+bevel},
+    {x: w/2, y: h/2-bevel},
+    {x: w/2-bevel, y: h/2},
+    {x:-w/2+bevel, y: h/2},
+    {x:-w/2, y: h/2-bevel},
+    {x:-w/2, y:-h/2+bevel},
+  ];
+}
+function tableWorldVerts(t){
+  const rad = deg2rad(t.rot);
+  return tableLocalVerts(t).map(p=>{
+    const r = rotatePoint(p.x,p.y,rad);
+    return {x:r.x+t.x, y:r.y+t.y};
+  });
+}
+function tableEdgesWorld(t){
+  const v = tableWorldVerts(t);
+  const edges = [];
+  for(let i=0;i<v.length;i++){
+    const a=v[i], b=v[(i+1)%v.length];
+    const mx=(a.x+b.x)/2, my=(a.y+b.y)/2;
+    const dx=b.x-a.x, dy=b.y-a.y;
+    const len=Math.hypot(dx,dy) || 1;
+    let nx = dy/len, ny=-dx/len;
+    const toCx = t.x-mx, toCy = t.y-my;
+    if(nx*toCx + ny*toCy > 0){ nx=-nx; ny=-ny; }
+    edges.push({a,b,mx,my,nx,ny,len});
+  }
+  return edges;
+}
+function seatLocalSlots(t){
+  const w=t.w, h=t.h, n=t.seatsPerSide||2;
+  const margin = Math.min(w*0.18, 22);
+  const slots = [];
+  for(let side=0; side<2; side++){
+    const y = side===0 ? -h/2-16 : h/2+16;
+    for(let i=0;i<n;i++){
+      const frac = n===1 ? 0.5 : (i+0.5)/n;
+      const x = -w/2+margin + frac*(w-2*margin);
+      slots.push({ id: t.id+'-s'+side+'-'+i, x, y });
+    }
+  }
+  return slots;
+}
+function seatWorldPos(t, slot){
+  const rad = deg2rad(t.rot);
+  const r = rotatePoint(slot.x, slot.y, rad);
+  return { x:r.x+t.x, y:r.y+t.y };
+}
+function allSeatsWithWorld(cls){
+  const seats = [];
+  for(const t of cls.tables){
+    for(const slot of seatLocalSlots(t)){
+      const p = seatWorldPos(t, slot);
+      seats.push({ id: slot.id, tableId: t.id, x:p.x, y:p.y });
+    }
+  }
+  return seats;
+}
+function buildAdjacency(cls, seats){
+  const adj = {};
+  for(const s of seats) adj[s.id] = [];
+  for(let i=0;i<seats.length;i++){
+    for(let j=i+1;j<seats.length;j++){
+      const s1=seats[i], s2=seats[j];
+      const sameTable = s1.tableId === s2.tableId;
+      const d = Math.hypot(s1.x-s2.x, s1.y-s2.y);
+      if(sameTable || d < ADJ_THRESHOLD){
+        adj[s1.id].push(s2.id);
+        adj[s2.id].push(s1.id);
+      }
+    }
+  }
+  return adj;
+}
+
+function trySnap(table, cls){
+  const others = cls.tables.filter(t => t.id !== table.id);
+  if(!others.length) return false;
+  const myEdges = tableEdgesWorld(table);
+  const THRESH = 30, ANGLE_THRESH = 20;
+  let best = null;
+  for(const other of others){
+    const otherEdges = tableEdgesWorld(other);
+    for(const e1 of myEdges){
+      for(const e2 of otherEdges){
+        const dist = Math.hypot(e1.mx-e2.mx, e1.my-e2.my);
+        const dot = e1.nx*e2.nx + e1.ny*e2.ny;
+        const angleOk = dot < -Math.cos(deg2rad(ANGLE_THRESH));
+        if(dist < THRESH && angleOk){
+          if(!best || dist < best.dist) best = {dist, e1, e2};
+        }
+      }
+    }
+  }
+  if(!best) return false;
+  const targetAngle = Math.atan2(-best.e2.ny, -best.e2.nx);
+  const currentAngle = Math.atan2(best.e1.ny, best.e1.nx);
+  let deltaDeg = (targetAngle - currentAngle) * 180/Math.PI;
+  table.rot = table.rot + deltaDeg;
+  const newEdges = tableEdgesWorld(table);
+  let closest = newEdges[0], cd = Infinity;
+  for(const e of newEdges){
+    const d = Math.hypot(e.mx-best.e2.mx, e.my-best.e2.my);
+    if(d<cd){ cd=d; closest=e; }
+  }
+  table.x += (best.e2.mx - closest.mx);
+  table.y += (best.e2.my - closest.my);
+  return true;
+}
+
+// ---------- persistence helpers ----------
+function isSeated(cls, studentId){
+  return cls.tables.some(t => seatLocalSlots(t).some(s => cls.assignments && cls.assignments[s.id] === studentId));
+}
+function getAssignment(cls, seatId){
+  return (cls.assignments || {})[seatId] || null;
+}
+function setAssignment(cls, seatId, studentId){
+  if(!cls.assignments) cls.assignments = {};
+  cls.assignments[seatId] = studentId;
+}
+
+// ---------- generation ----------
+function generateGroupSeating(cls){
+  const seats = allSeatsWithWorld(cls);
+  const adj = buildAdjacency(cls, seats);
+  const seatIds = seats.map(s=>s.id);
+  if(cls.students.length > seatIds.length){
+    alert(`Not enough seats: ${cls.students.length} students but only ${seatIds.length} seats.`);
+    return;
+  }
+  let bestAssign = null, bestScore = Infinity;
+  const TRIALS = 250;
+  for(let t=0;t<TRIALS;t++){
+    const assign = {};
+    const seatOrder = shuffle(seatIds);
+    const studentOrder = shuffle(cls.students);
+    let score = 0;
+    for(const stu of studentOrder){
+      let bestPenalty = Infinity, ties = [];
+      for(const seatId of seatOrder){
+        if(assign[seatId]) continue;
+        let penalty = 0;
+        for(const nb of adj[seatId]){
+          const nbStu = assign[nb];
+          if(!nbStu) continue;
+          const rel = cls.relationships[relKey(stu.id, nbStu)];
+          if(rel === 'red') penalty += 1000;
+          else if(rel === 'yellow') penalty += 5;
+        }
+        if(penalty < bestPenalty){ bestPenalty = penalty; ties = [seatId]; }
+        else if(penalty === bestPenalty){ ties.push(seatId); }
+      }
+      const chosen = ties[Math.floor(Math.random()*ties.length)];
+      assign[chosen] = stu.id;
+      score += bestPenalty;
+    }
+    if(score < bestScore){ bestScore = score; bestAssign = assign; if(score===0) break; }
+  }
+  cls.assignments = bestAssign;
+  if(bestScore >= 1000) alert("Could not satisfy all red (never-sit-close) rules with the current layout — placed the best possible arrangement, please review the highlighted seating.");
+}
+
+function generatePairSeating(cls){
+  const seats = allSeatsWithWorld(cls);
+  const adj = buildAdjacency(cls, seats);
+  const seatIds = seats.map(s=>s.id);
+  if(cls.students.length > seatIds.length){
+    alert(`Not enough seats: ${cls.students.length} students but only ${seatIds.length} seats.`);
+    return;
+  }
+  const slotSet = new Set(); const slotPairs = [];
+  for(const s of seats){
+    for(const nb of adj[s.id]){
+      const key = [s.id,nb].sort().join('~');
+      if(slotSet.has(key)) continue;
+      slotSet.add(key);
+      slotPairs.push([s.id, nb]);
+    }
+  }
+  let bestPairing = null, bestPScore = Infinity;
+  for(let t=0;t<150;t++){
+    const pool = shuffle(cls.students);
+    const pairs = []; let score = 0;
+    while(pool.length > 1){
+      const a = pool.pop();
+      let bestPen = Infinity, ties = [];
+      for(let i=0;i<pool.length;i++){
+        const rel = cls.relationships[relKey(a.id, pool[i].id)];
+        const pen = rel==='red' ? 1000 : rel==='yellow' ? 5 : 0;
+        if(pen < bestPen){ bestPen = pen; ties = [i]; }
+        else if(pen === bestPen) ties.push(i);
+      }
+      const idx = ties[Math.floor(Math.random()*ties.length)];
+      const b = pool.splice(idx,1)[0];
+      pairs.push([a,b]);
+      score += bestPen;
+    }
+    const leftover = pool.length ? [pool[0]] : [];
+    if(score < bestPScore){ bestPScore = score; bestPairing = {pairs, leftover}; }
+  }
+
+  let bestPlacement = null, bestScore2 = Infinity;
+  for(let t=0;t<150;t++){
+    const assign = {};
+    const slotsLeft = shuffle(slotPairs);
+    const pairsOrder = shuffle(bestPairing.pairs);
+    let score = 0, ok = true;
+    for(const [a,b] of pairsOrder){
+      let bestPen = Infinity, ties = [];
+      for(let i=0;i<slotsLeft.length;i++){
+        const [s1,s2] = slotsLeft[i];
+        if(assign[s1] || assign[s2]) continue;
+        let pen = 0;
+        for(const seatId of [s1,s2]){
+          const stu = seatId===s1 ? a : b;
+          for(const nb of adj[seatId]){
+            if(nb===s1 || nb===s2) continue;
+            const other = assign[nb];
+            if(!other) continue;
+            const rel = cls.relationships[relKey(stu.id, other)];
+            if(rel==='red') pen += 1000;
+            else if(rel==='yellow') pen += 5;
+          }
+        }
+        if(pen < bestPen){ bestPen = pen; ties = [i]; }
+        else if(pen === bestPen) ties.push(i);
+      }
+      if(!ties.length){ ok=false; break; }
+      const chosen = ties[Math.floor(Math.random()*ties.length)];
+      const [s1,s2] = slotsLeft[chosen];
+      assign[s1] = a.id; assign[s2] = b.id;
+      score += bestPen;
+    }
+    if(!ok) continue;
+    for(const stu of bestPairing.leftover){
+      const free = seatIds.filter(id => !assign[id]);
+      if(!free.length){ ok=false; break; }
+      assign[free[Math.floor(Math.random()*free.length)]] = stu.id;
+    }
+    if(!ok) continue;
+    if(score < bestScore2){ bestScore2 = score; bestPlacement = assign; }
+  }
+  if(!bestPlacement){ alert("Could not find a valid pair arrangement — try adding more tables or loosening rules."); return; }
+  cls.assignments = bestPlacement;
+  if(bestScore2 >= 1000 || bestPScore >= 1000) alert("Could not satisfy all red (never-sit-close) rules with the current layout — placed the best possible arrangement, please review the highlighted seating.");
+}
+
+function autoPairStudent(cls, stu){
+  if(isSeated(cls, stu.id)) return;
+  const partners = cls.students.filter(s => s.id !== stu.id && !isSeated(cls, s.id) &&
+    cls.relationships[relKey(stu.id, s.id)] !== 'red');
+  if(!partners.length){ alert(`No available partners for ${stu.name}.`); return; }
+  const nonYellow = partners.filter(p => cls.relationships[relKey(stu.id,p.id)] !== 'yellow');
+  const pool = nonYellow.length ? nonYellow : partners;
+  const partner = pool[Math.floor(Math.random()*pool.length)];
+
+  const seats = allSeatsWithWorld(cls);
+  const adj = buildAdjacency(cls, seats);
+  const emptyIds = new Set(seats.filter(s => !getAssignment(cls, s.id)).map(s=>s.id));
+  const candidates = [];
+  const seen = new Set();
+  for(const id of emptyIds){
+    for(const nb of adj[id]){
+      if(!emptyIds.has(nb)) continue;
+      const key = [id,nb].sort().join('~');
+      if(seen.has(key)) continue;
+      seen.add(key);
+      candidates.push([id,nb]);
+    }
+  }
+  if(!candidates.length){ alert("No empty adjacent seats available to place this pair."); return; }
+  const [s1,s2] = candidates[Math.floor(Math.random()*candidates.length)];
+  setAssignment(cls, s1, stu.id);
+  setAssignment(cls, s2, partner.id);
+  render();
+}
+
+// ---------- rendering ----------
+const svg = document.getElementById('canvas');
+
+function el(tag, attrs, parent){
+  const e = document.createElementNS(SVG_NS, tag);
+  for(const k in attrs) e.setAttribute(k, attrs[k]);
+  if(parent) parent.appendChild(e);
+  return e;
+}
+
+function renderClassTabs(){
+  const wrap = document.getElementById('classTabs');
+  wrap.innerHTML = '';
+  for(const c of db.classes){
+    const tab = document.createElement('div');
+    tab.className = 'tab' + (c.id===currentClassId ? ' active' : '');
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = c.name;
+    nameSpan.ondblclick = () => {
+      const nn = prompt('Rename class', c.name);
+      if(nn && nn.trim()){ c.name = nn.trim(); saveDB(); renderClassTabs(); }
+    };
+    tab.appendChild(nameSpan);
+    tab.onclick = (ev) => { if(ev.target.className!=='x'){ currentClassId = c.id; selectedTableId=null; selectedWallId=null; saveDB(); render(); } };
+    if(db.classes.length > 1){
+      const x = document.createElement('span');
+      x.className = 'x'; x.textContent = '✕';
+      x.onclick = (ev) => {
+        ev.stopPropagation();
+        if(confirm(`Delete class "${c.name}"? This cannot be undone.`)){
+          db.classes = db.classes.filter(cc=>cc.id!==c.id);
+          if(currentClassId===c.id) currentClassId = db.classes[0].id;
+          saveDB(); render();
+        }
+      };
+      tab.appendChild(x);
+    }
+    wrap.appendChild(tab);
+  }
+  const addBtn = document.createElement('button');
+  addBtn.className = 'tab-add';
+  addBtn.textContent = '+ Add Class';
+  addBtn.onclick = () => {
+    const c = defaultClass(`Class ${db.classes.length+1}`);
+    db.classes.push(c);
+    currentClassId = c.id;
+    saveDB(); render();
+  };
+  wrap.appendChild(addBtn);
+}
+
+function renderStudents(cls){
+  const list = document.getElementById('studentList');
+  list.innerHTML = '';
+  for(const s of cls.students){
+    const li = document.createElement('li');
+    if(isSeated(cls, s.id)) li.className = 'seated';
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'name'; nameSpan.textContent = s.name;
+    li.appendChild(nameSpan);
+    const del = document.createElement('button');
+    del.className = 'small'; del.textContent = '✕';
+    del.onclick = () => {
+      cls.students = cls.students.filter(x=>x.id!==s.id);
+      for(const k in cls.relationships) if(k.includes(s.id)) delete cls.relationships[k];
+      if(cls.assignments) for(const k in cls.assignments) if(cls.assignments[k]===s.id) delete cls.assignments[k];
+      saveDB(); render();
+    };
+    li.appendChild(del);
+    list.appendChild(li);
+  }
+
+  const relA = document.getElementById('relA'), relB = document.getElementById('relB');
+  const opts = cls.students.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+  relA.innerHTML = opts; relB.innerHTML = opts;
+
+  const relList = document.getElementById('relList');
+  relList.innerHTML = '';
+  const byId = Object.fromEntries(cls.students.map(s=>[s.id,s.name]));
+  for(const key in cls.relationships){
+    const [a,b] = key.split('|');
+    if(!byId[a] || !byId[b]) continue;
+    const color = cls.relationships[key];
+    const li = document.createElement('li');
+    li.innerHTML = `<span class="dot ${color}"></span><span class="names">${escapeHtml(byId[a])} &amp; ${escapeHtml(byId[b])}</span>`;
+    const del = document.createElement('button');
+    del.className = 'small'; del.textContent = '✕';
+    del.onclick = () => { delete cls.relationships[key]; saveDB(); render(); };
+    li.appendChild(del);
+    relList.appendChild(li);
+  }
+
+  document.getElementById('capacityHint').textContent =
+    `${cls.students.length} student${cls.students.length===1?'':'s'} · ${allSeatsWithWorld(cls).length} seats`;
+}
+
+function renderPairAssist(cls){
+  const panel = document.getElementById('pairAssistPanel');
+  if(cls.mode !== 'pair'){ panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  const list = document.getElementById('pairAssistList');
+  list.innerHTML = '';
+  for(const s of cls.students){
+    const seated = isSeated(cls, s.id);
+    const row = document.createElement('div');
+    row.className = 'partner-row';
+    const nCount = cls.students.filter(o=>o.id!==s.id && !isSeated(cls,o.id) && cls.relationships[relKey(s.id,o.id)]!=='red').length;
+    row.innerHTML = `<span class="name">${escapeHtml(s.name)}</span><span class="avail">${seated?'seated':nCount+' possible'}</span>`;
+    const btn = document.createElement('button');
+    btn.className = 'small'; btn.textContent = '🎲';
+    btn.disabled = seated || nCount===0;
+    btn.onclick = () => autoPairStudent(cls, s);
+    row.appendChild(btn);
+    list.appendChild(row);
+  }
+}
+
+function renderCanvas(cls){
+  svg.innerHTML = '';
+  const bg = el('rect', {x:0,y:0,width:1000,height:640,fill:'#fbfcfe', 'data-role':'canvas-bg'}, svg);
+  for(let gx=0; gx<=1000; gx+=25) el('line', {x1:gx,y1:0,x2:gx,y2:640,class:'grid-line'}, svg);
+  for(let gy=0; gy<=640; gy+=25) el('line', {x1:0,y1:gy,x2:1000,y2:gy,class:'grid-line'}, svg);
+
+  for(const w of cls.walls){
+    const r = el('rect', {
+      x:w.x, y:w.y, width:w.w, height:w.h,
+      class: 'wall-rect' + (w.id===selectedWallId ? ' selected' : ''),
+      'data-role':'wall', 'data-id': w.id
+    }, svg);
+  }
+
+  if(drag && drag.type==='wall-draw'){
+    el('rect', {x:drag.rx,y:drag.ry,width:drag.rw,height:drag.rh,class:'wall-rect',opacity:.6}, svg);
+  }
+
+  for(const t of cls.tables){
+    const g = el('g', {transform:`translate(${t.x},${t.y}) rotate(${t.rot})`, 'data-role':'table-body', 'data-id':t.id}, svg);
+    const verts = tableLocalVerts(t).map(p=>`${p.x},${p.y}`).join(' ');
+    el('polygon', {points:verts, class:'table-shape'+(t.id===selectedTableId?' selected':''), 'data-role':'table-body','data-id':t.id}, g);
+
+    for(const slot of seatLocalSlots(t)){
+      const studentId = getAssignment(cls, slot.id);
+      const student = studentId ? cls.students.find(s=>s.id===studentId) : null;
+      el('circle', {cx:slot.x, cy:slot.y, r:15, class:'seat'+(student?' filled':'')}, g);
+      const label = student ? initials(student.name) : '';
+      if(label) el('text', {x:slot.x, y:slot.y+4, class:'seat-label'}, g).textContent = label;
+    }
+
+    if(t.id===selectedTableId){
+      const hy = -t.h/2 - 30;
+      el('line', {x1:0,y1:-t.h/2,x2:0,y2:hy, class:'rotate-line'}, g);
+      el('circle', {cx:0, cy:hy, r:8, class:'rotate-handle', 'data-role':'rotate-handle','data-id':t.id}, g);
+    }
+  }
+
+}
+
+function initials(name){
+  return name.trim().split(/\s+/).map(p=>p[0]).slice(0,2).join('').toUpperCase();
+}
+function escapeHtml(s){
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function updateSelectedTableBar(cls){
+  const bar = document.getElementById('selectedTableBar');
+  bar.style.display = selectedTableId ? '' : 'none';
+}
+
+function render(){
+  const cls = getClass();
+  if(!cls) return;
+  renderClassTabs();
+  renderStudents(cls);
+  renderPairAssist(cls);
+  renderCanvas(cls);
+  updateSelectedTableBar(cls);
+  document.getElementById('modeGroupBtn').classList.toggle('active', cls.mode==='group');
+  document.getElementById('modePairBtn').classList.toggle('active', cls.mode==='pair');
+  document.getElementById('editRoomBtn').classList.toggle('active', editRoomMode);
+  document.getElementById('roomHint').style.display = editRoomMode ? '' : 'none';
+}
+
+// ---------- interaction ----------
+function svgPoint(evt){
+  const pt = svg.createSVGPoint();
+  pt.x = evt.clientX; pt.y = evt.clientY;
+  const m = svg.getScreenCTM().inverse();
+  const p = pt.matrixTransform(m);
+  return {x:p.x, y:p.y};
+}
+
+svg.addEventListener('pointerdown', (e) => {
+  const cls = getClass();
+  const roleEl = e.target.closest('[data-role]');
+  const role = roleEl ? roleEl.getAttribute('data-role') : null;
+  const id = roleEl ? roleEl.getAttribute('data-id') : null;
+  const p = svgPoint(e);
+
+  if(role === 'rotate-handle'){
+    const t = cls.tables.find(tt=>tt.id===id);
+    selectedTableId = id; selectedWallId=null;
+    drag = { type:'rotate', tableId:id };
+    svg.setPointerCapture(e.pointerId);
+    render();
+    return;
+  }
+  if(role === 'table-body'){
+    const t = cls.tables.find(tt=>tt.id===id);
+    selectedTableId = id; selectedWallId = null;
+    drag = { type:'table', tableId:id, dx:t.x-p.x, dy:t.y-p.y };
+    svg.setPointerCapture(e.pointerId);
+    render();
+    return;
+  }
+  if(role === 'wall'){
+    if(editRoomMode){ selectedWallId = id; selectedTableId=null; render(); }
+    return;
+  }
+  if(role === 'canvas-bg'){
+    selectedTableId = null; selectedWallId = null;
+    if(editRoomMode){
+      drag = { type:'wall-draw', sx:p.x, sy:p.y, rx:p.x, ry:p.y, rw:0, rh:0 };
+      svg.setPointerCapture(e.pointerId);
+    }
+    render();
+  }
+});
+
+svg.addEventListener('pointermove', (e) => {
+  if(!drag) return;
+  const cls = getClass();
+  const p = svgPoint(e);
+  if(drag.type === 'table'){
+    const t = cls.tables.find(tt=>tt.id===drag.tableId);
+    t.x = p.x + drag.dx; t.y = p.y + drag.dy;
+    renderCanvas(cls);
+  } else if(drag.type === 'rotate'){
+    const t = cls.tables.find(tt=>tt.id===drag.tableId);
+    const angle = Math.atan2(p.y - t.y, p.x - t.x) * 180/Math.PI;
+    t.rot = angle + 90;
+    renderCanvas(cls);
+  } else if(drag.type === 'wall-draw'){
+    drag.rx = Math.min(drag.sx, p.x); drag.ry = Math.min(drag.sy, p.y);
+    drag.rw = Math.abs(p.x - drag.sx); drag.rh = Math.abs(p.y - drag.sy);
+    renderCanvas(cls);
+  }
+});
+
+svg.addEventListener('pointerup', (e) => {
+  if(!drag) return;
+  const cls = getClass();
+  if(drag.type === 'table'){
+    const t = cls.tables.find(tt=>tt.id===drag.tableId);
+    trySnap(t, cls);
+    saveDB();
+  } else if(drag.type === 'rotate'){
+    saveDB();
+  } else if(drag.type === 'wall-draw'){
+    if(drag.rw > 8 && drag.rh > 8){
+      cls.walls.push({ id:uid(), x:drag.rx, y:drag.ry, w:drag.rw, h:drag.rh });
+      saveDB();
+    }
+  }
+  drag = null;
+  render();
+});
+
+document.addEventListener('keydown', (e) => {
+  if(e.key !== 'Delete' && e.key !== 'Backspace') return;
+  if(document.activeElement && ['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+  const cls = getClass();
+  if(selectedTableId){
+    cls.tables = cls.tables.filter(t=>t.id!==selectedTableId);
+    if(cls.assignments) for(const k in cls.assignments) if(k.startsWith(selectedTableId+'-')) delete cls.assignments[k];
+    selectedTableId = null; saveDB(); render();
+  } else if(selectedWallId){
+    cls.walls = cls.walls.filter(w=>w.id!==selectedWallId);
+    selectedWallId = null; saveDB(); render();
+  }
+});
+
+// ---------- UI wiring ----------
+document.getElementById('addStudentBtn').onclick = () => {
+  const cls = getClass();
+  const input = document.getElementById('studentInput');
+  const raw = input.value.trim();
+  if(!raw) return;
+  const names = raw.split(/[,\n]/).map(s=>s.trim()).filter(Boolean);
+  for(const name of names) cls.students.push({ id:uid(), name });
+  input.value = '';
+  saveDB(); render();
+};
+document.getElementById('studentInput').addEventListener('keydown', (e) => {
+  if(e.key === 'Enter') document.getElementById('addStudentBtn').click();
+});
+
+document.getElementById('addRelBtn').onclick = () => {
+  const cls = getClass();
+  const a = document.getElementById('relA').value;
+  const b = document.getElementById('relB').value;
+  const color = document.getElementById('relColor').value;
+  if(!a || !b || a===b){ alert('Choose two different students.'); return; }
+  cls.relationships[relKey(a,b)] = color;
+  saveDB(); render();
+};
+
+document.getElementById('modeGroupBtn').onclick = () => { getClass().mode = 'group'; saveDB(); render(); };
+document.getElementById('modePairBtn').onclick = () => { getClass().mode = 'pair'; saveDB(); render(); };
+
+document.getElementById('generateBtn').onclick = () => {
+  const cls = getClass();
+  if(!cls.students.length){ alert('Add some students first.'); return; }
+  if(!cls.tables.length){ alert('Add at least one table first.'); return; }
+  if(cls.mode === 'pair') generatePairSeating(cls); else generateGroupSeating(cls);
+  saveDB(); render();
+};
+document.getElementById('clearSeatsBtn').onclick = () => {
+  getClass().assignments = {};
+  saveDB(); render();
+};
+
+document.getElementById('editRoomBtn').onclick = () => {
+  editRoomMode = !editRoomMode;
+  selectedWallId = null;
+  render();
+};
+
+function addTable(shape, seatsPerSide, w, h){
+  const cls = getClass();
+  cls.tables.push({ id:uid(), shape, seatsPerSide, w, h, x: 200+Math.random()*200, y: 200+Math.random()*150, rot:0 });
+  saveDB(); render();
+}
+document.getElementById('addRectGroupBtn').onclick = () => addTable('rect', 2, 190, 90);
+document.getElementById('addRectPairBtn').onclick = () => addTable('rect', 1, 120, 70);
+document.getElementById('addHexGroupBtn').onclick = () => addTable('hex', 2, 190, 100);
+document.getElementById('addHexPairBtn').onclick = () => addTable('hex', 1, 130, 80);
+
+document.getElementById('rotCWBtn').onclick = () => {
+  const cls = getClass();
+  const t = cls.tables.find(tt=>tt.id===selectedTableId);
+  if(!t) return;
+  const step = parseFloat(document.getElementById('rotStepSelect').value);
+  t.rot += step; saveDB(); renderCanvas(cls);
+};
+document.getElementById('rotCCWBtn').onclick = () => {
+  const cls = getClass();
+  const t = cls.tables.find(tt=>tt.id===selectedTableId);
+  if(!t) return;
+  const step = parseFloat(document.getElementById('rotStepSelect').value);
+  t.rot -= step; saveDB(); renderCanvas(cls);
+};
+document.getElementById('deleteTableBtn').onclick = () => {
+  const cls = getClass();
+  cls.tables = cls.tables.filter(t=>t.id!==selectedTableId);
+  if(cls.assignments) for(const k in cls.assignments) if(k.startsWith(selectedTableId+'-')) delete cls.assignments[k];
+  selectedTableId = null; saveDB(); render();
+};
+
+document.getElementById('exportBtn').onclick = () => {
+  const blob = new Blob([JSON.stringify(db, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'seating-plan.json';
+  a.click();
+};
+document.getElementById('importBtn').onclick = () => document.getElementById('importFile').click();
+document.getElementById('importFile').onchange = (e) => {
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try{
+      const parsed = JSON.parse(reader.result);
+      if(!parsed || !Array.isArray(parsed.classes)) throw new Error('Invalid file');
+      db = parsed;
+      currentClassId = db.classes[0].id;
+      saveDB(); render();
+    }catch(err){ alert('Could not import file: ' + err.message); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+};
+
+render();
+})();
+</script>
+</body>
+</html>
