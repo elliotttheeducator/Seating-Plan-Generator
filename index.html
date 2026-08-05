@@ -90,8 +90,8 @@
   .pairs-col .studentlist li.seated{opacity:.5;}
   .pairs-col .studentlist li.seated .name{text-decoration:line-through;color:var(--muted);}
   .pairs-col .studentlist li.blocked{opacity:.4;}
-  .pairs-empty-hint{color:var(--muted);font-size:13px;padding:10px 2px;}
   .pairs-col .studentlist li .avail{font-size:11px;color:var(--muted);margin-left:auto;}
+  .pairs-col .studentlist li .pair-checkbox{width:16px;height:16px;cursor:pointer;flex:0 0 auto;}
   .lock-overlay{position:fixed;inset:0;background:#0f172a;z-index:2000;display:flex;align-items:center;justify-content:center;}
   .lock-overlay.hidden{display:none;}
   .lock-card{background:#fff;border-radius:12px;padding:32px;width:320px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.35);}
@@ -260,7 +260,7 @@
 <div class="present-overlay" id="pairsOverlay">
   <div class="present-bar">
     <strong>Pairing Screen</strong>
-    <span class="hint" id="pairsHint">Pick a student, then click who they should be paired with.</span>
+    <span class="hint" id="pairsHint">Pick a student, then tick who they could be paired with — ticks save automatically as good (green) pairings.</span>
     <span style="margin-left:auto;"></span>
     <button id="pairsCloseBtn">✕ Close</button>
   </div>
@@ -270,7 +270,7 @@
       <ul class="studentlist" id="pairsRosterList"></ul>
     </div>
     <div class="pairs-col">
-      <h2 id="pairsCandidateTitle">2. Pick their partner</h2>
+      <h2 id="pairsCandidateTitle">2. Tick their possible pairings</h2>
       <ul class="studentlist" id="pairsCandidateList"></ul>
     </div>
   </div>
@@ -612,7 +612,7 @@ function generatePairSeating(cls){
       let bestPen = Infinity, ties = [];
       for(let i=0;i<pool.length;i++){
         const rel = cls.relationships[relKey(a.id, pool[i].id)];
-        const pen = rel==='red' ? 1000 : rel==='yellow' ? 5 : 0;
+        const pen = rel==='red' ? 1000 : rel==='yellow' ? 5 : rel==='green' ? -2 : 0;
         if(pen < bestPen){ bestPen = pen; ties = [i]; }
         else if(pen === bestPen) ties.push(i);
       }
@@ -699,8 +699,9 @@ function autoPairStudent(cls, stu){
   const partners = cls.students.filter(s => s.id !== stu.id && !isSeated(cls, s.id) &&
     cls.relationships[relKey(stu.id, s.id)] !== 'red');
   if(!partners.length){ alert(`No available partners for ${stu.name}.`); return; }
+  const greens = partners.filter(p => cls.relationships[relKey(stu.id,p.id)] === 'green');
   const nonYellow = partners.filter(p => cls.relationships[relKey(stu.id,p.id)] !== 'yellow');
-  const pool = nonYellow.length ? nonYellow : partners;
+  const pool = greens.length ? greens : (nonYellow.length ? nonYellow : partners);
   const partner = pool[Math.floor(Math.random()*pool.length)];
   if(!seatPairInFreeSlot(cls, stu, partner)){ alert("No empty adjacent seats available to place this pair."); return; }
   saveDB(); render();
@@ -718,12 +719,18 @@ function el(tag, attrs, parent){
 
 function addCarpetDefs(targetSvg, patternId, floorColor){
   const defs = el('defs', {}, targetSvg);
-  const pattern = el('pattern', {id:patternId, width:40, height:40, patternUnits:'userSpaceOnUse'}, defs);
-  el('rect', {width:40, height:40, fill: floorColor || DEFAULT_THEME.floorColor}, pattern);
-  // Flecks use semi-transparent black/white so the texture reads on any floor color.
+  const pattern = el('pattern', {id:patternId, width:50, height:50, patternUnits:'userSpaceOnUse'}, defs);
+  el('rect', {width:50, height:50, fill: floorColor || DEFAULT_THEME.floorColor}, pattern);
+  // A couple of soft, larger mottled patches first (depth), then fine flecks on top (grain) —
+  // semi-transparent black/white so the texture reads on any floor color the theme picks.
+  const patches = [
+    [10,12,7,'rgba(255,255,255,.06)'], [38,34,8,'rgba(0,0,0,.05)'], [24,44,6,'rgba(255,255,255,.05)']
+  ];
+  for(const [cx,cy,r,fill] of patches) el('circle', {cx,cy,r,fill}, pattern);
   const flecks = [
     [6,8,1.4,'rgba(255,255,255,.35)'], [22,4,1.1,'rgba(0,0,0,.12)'], [14,20,1.3,'rgba(255,255,255,.3)'], [32,16,1,'rgba(0,0,0,.12)'],
-    [28,30,1.4,'rgba(255,255,255,.35)'], [4,34,1,'rgba(0,0,0,.12)'], [18,36,1.2,'rgba(255,255,255,.3)'], [36,26,1.1,'rgba(0,0,0,.12)']
+    [28,30,1.4,'rgba(255,255,255,.35)'], [4,34,1,'rgba(0,0,0,.12)'], [18,36,1.2,'rgba(255,255,255,.3)'], [36,26,1.1,'rgba(0,0,0,.12)'],
+    [44,10,1.2,'rgba(255,255,255,.3)'], [46,44,1.3,'rgba(0,0,0,.12)'], [10,46,1,'rgba(255,255,255,.3)'], [40,20,0.9,'rgba(0,0,0,.1)']
   ];
   for(const [cx,cy,r,fill] of flecks) el('circle', {cx,cy,r,fill}, pattern);
 }
@@ -840,6 +847,7 @@ function renderPairAssist(cls){
 
 function renderCanvas(cls){
   svg.innerHTML = '';
+  const firstNameCounts = computeFirstNameCounts(cls);
   const theme = cls.theme || DEFAULT_THEME;
   addCarpetDefs(svg, 'carpetPattern', theme.floorColor);
   const vb = currentViewBox;
@@ -896,8 +904,8 @@ function renderCanvas(cls){
       if(student){
         // counter-rotate so names stay upright regardless of table rotation
         const tg = el('g', {transform:`translate(${slot.x},${slot.y}) rotate(${-t.rot})`}, g);
-        const lbl = fitSeatLabel(student.name, 1);
-        el('text', {x:0, y:4, class:'seat-label', style:`font-size:${lbl.size}px`}, tg).textContent = lbl.text;
+        const lbl = fitSeatLabel(student.name, 1, firstNameCounts);
+        el('text', {x:0, y:4, class:'seat-label', style:`font-size:${lbl.size}px;font-weight:600;`}, tg).textContent = lbl.text;
       }
     }
 
@@ -919,16 +927,27 @@ function renderCanvas(cls){
   }
 }
 
-// Shortened to "First L." on the room diagram (seats are cramped) — still tells
-// same-first-name students apart (e.g. "Hannah G." vs "Hannah B."), unlike bare initials.
-function seatDisplayName(name){
-  const parts = name.trim().split(/\s+/);
-  if(parts.length < 2) return parts[0] || name;
-  return `${parts[0]} ${parts[parts.length-1][0]}.`;
+// First name only on the room diagram, UNLESS another student shares that first name —
+// then a last initial is added (e.g. "Hannah G." vs "Hannah B."), matching how a teacher
+// would actually label desks by hand: no clutter unless there's a real collision.
+function computeFirstNameCounts(cls){
+  const counts = {};
+  for(const s of cls.students){
+    const first = s.name.trim().split(/\s+/)[0].toLowerCase();
+    counts[first] = (counts[first] || 0) + 1;
+  }
+  return counts;
 }
-function fitSeatLabel(name, scale){
+function seatDisplayName(name, firstNameCounts){
+  const parts = name.trim().split(/\s+/);
+  const first = parts[0] || name;
+  if(parts.length < 2) return first;
+  const needsInitial = firstNameCounts && firstNameCounts[first.toLowerCase()] > 1;
+  return needsInitial ? `${first} ${parts[parts.length-1][0]}.` : first;
+}
+function fitSeatLabel(name, scale, firstNameCounts){
   scale = scale || 1;
-  const text = seatDisplayName(name);
+  const text = seatDisplayName(name, firstNameCounts);
   const n = text.length;
   let size = 12;
   if(n>14) size=9;
@@ -1321,6 +1340,7 @@ function closePresent(){
 }
 function renderPresent(){
   const cls = getClass();
+  const firstNameCounts = computeFirstNameCounts(cls);
   document.getElementById('presentTitle').textContent = cls.name + ' — Seating Plan';
   document.getElementById('viewStudentBtn').classList.toggle('active', presentView==='student');
   document.getElementById('viewTeacherBtn').classList.toggle('active', presentView==='teacher');
@@ -1373,7 +1393,7 @@ function renderPresent(){
       el('circle', {cx:slot.x, cy:slot.y, r:30, class:'seat'+(student?' filled':'')}, g);
       if(student){
         const tg = el('g', {transform:`translate(${slot.x},${slot.y}) rotate(${-trot})`}, g);
-        const lbl = fitSeatLabel(student.name, 1.5);
+        const lbl = fitSeatLabel(student.name, 1.5, firstNameCounts);
         el('text', {x:0, y:5, class:'seat-label', style:`font-size:${lbl.size}px;font-weight:600;`}, tg).textContent = lbl.text;
       }
     }
@@ -1395,77 +1415,70 @@ function renderPairsScreen(){
   const cls = getClass();
   const rosterList = document.getElementById('pairsRosterList');
   rosterList.innerHTML = '';
-  let anyPickable = false;
   for(const s of cls.students){
-    const seated = isSeated(cls, s.id);
-    if(!seated) anyPickable = true;
     const li = document.createElement('li');
-    li.className = (s.id===pairsSelectedId ? 'picked-a ' : '') + (seated ? 'seated' : 'pickable');
+    li.className = 'pickable' + (s.id===pairsSelectedId ? ' picked-a' : '');
     const nameSpan = document.createElement('span');
     nameSpan.className = 'name'; nameSpan.textContent = s.name;
     li.appendChild(nameSpan);
     const tag = document.createElement('span');
-    tag.className = 'avail'; tag.textContent = seated ? 'seated' : 'click to pick →';
+    tag.className = 'avail'; tag.textContent = isSeated(cls, s.id) ? 'seated' : '';
     li.appendChild(tag);
-    if(!seated) li.onclick = () => { pairsSelectedId = s.id; renderPairsScreen(); };
+    li.onclick = () => { pairsSelectedId = s.id; renderPairsScreen(); };
     rosterList.appendChild(li);
-  }
-  if(!anyPickable){
-    const hint = document.createElement('div');
-    hint.className = 'pairs-empty-hint';
-    hint.textContent = 'Everyone is already seated. Click "Clear Seats" in the sidebar to pair again.';
-    rosterList.appendChild(hint);
   }
 
   const candTitle = document.getElementById('pairsCandidateTitle');
   const candList = document.getElementById('pairsCandidateList');
   candList.innerHTML = '';
   const stu = cls.students.find(s=>s.id===pairsSelectedId);
-  if(!stu || isSeated(cls, stu.id)){
-    pairsSelectedId = null;
-    candTitle.textContent = 'Pick a student on the left to choose their partner';
+  if(!stu){
+    candTitle.textContent = 'Pick a student on the left to tick their possible pairings';
     return;
   }
-  candTitle.textContent = `Choose a partner for ${stu.name}`;
-  const others = cls.students.filter(o => o.id !== stu.id && !isSeated(cls, o.id));
+  candTitle.textContent = `Tick who ${stu.name} could be paired with`;
+  const others = cls.students.filter(o => o.id !== stu.id);
   if(!others.length){
     const li = document.createElement('li');
-    li.textContent = 'No unseated students left to pair with.';
+    li.textContent = 'No other students yet.';
     candList.appendChild(li);
     return;
   }
   for(const other of others){
     const rel = cls.relationships[relKey(stu.id, other.id)];
     const li = document.createElement('li');
-    const dot = document.createElement('span');
-    dot.className = 'dot' + (rel ? ' '+rel : '');
-    if(!rel) dot.style.background = '#cbd5e1';
-    li.appendChild(dot);
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'name'; nameSpan.textContent = other.name;
-    li.appendChild(nameSpan);
     if(rel === 'red'){
       li.className = 'blocked';
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'name'; nameSpan.textContent = other.name;
+      li.appendChild(nameSpan);
       const tag = document.createElement('span');
       tag.className = 'avail'; tag.textContent = 'blocked (red)';
       li.appendChild(tag);
     } else {
       li.className = 'pickable';
+      const toggle = () => {
+        const key = relKey(stu.id, other.id);
+        if(cls.relationships[key] === 'green') delete cls.relationships[key];
+        else cls.relationships[key] = 'green';
+        saveDB();
+        renderPairsScreen();
+      };
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'pair-checkbox';
+      checkbox.checked = rel === 'green';
+      checkbox.onclick = (ev) => { ev.stopPropagation(); toggle(); };
+      li.appendChild(checkbox);
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'name'; nameSpan.textContent = other.name;
+      li.appendChild(nameSpan);
       if(rel === 'yellow'){
         const tag = document.createElement('span');
-        tag.className = 'avail'; tag.textContent = 'caution (yellow)';
+        tag.className = 'avail'; tag.textContent = 'currently yellow';
         li.appendChild(tag);
       }
-      li.onclick = () => {
-        if(!seatPairInFreeSlot(cls, stu, other)){
-          alert('No empty adjacent seats available for this pair. Add another table or clear seats.');
-          return;
-        }
-        saveDB();
-        pairsSelectedId = null;
-        renderPairsScreen();
-        render();
-      };
+      li.onclick = toggle;
     }
     candList.appendChild(li);
   }
