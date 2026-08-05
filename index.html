@@ -316,11 +316,17 @@ let drag = null; // {type:'table'|'rotate'|'wall'|'door'|'doorRotate'|'wall-draw
 // grow (or shrink back) without limit while the app zooms to keep everything in frame
 let currentViewBox = { x:0, y:0, w:BASE_ROOM_W, h:BASE_ROOM_H };
 
+// Bounds come from the actual walls (if any) — not unioned with a hardcoded default room
+// rectangle, which used to leave a phantom gap whenever a room's walls didn't start at (0,0).
 function computeRoomBounds(cls){
-  let minX=0, minY=0, maxX=BASE_ROOM_W, maxY=BASE_ROOM_H;
-  for(const w of cls.walls){
-    minX=Math.min(minX,w.x); minY=Math.min(minY,w.y);
-    maxX=Math.max(maxX,w.x+w.w); maxY=Math.max(maxY,w.y+w.h);
+  let minX, minY, maxX, maxY;
+  if(cls.walls && cls.walls.length){
+    minX = Math.min(...cls.walls.map(w=>w.x));
+    minY = Math.min(...cls.walls.map(w=>w.y));
+    maxX = Math.max(...cls.walls.map(w=>w.x+w.w));
+    maxY = Math.max(...cls.walls.map(w=>w.y+w.h));
+  } else {
+    minX = 0; minY = 0; maxX = BASE_ROOM_W; maxY = BASE_ROOM_H;
   }
   for(const t of cls.tables){
     const r = Math.max(t.w,t.h)/2 + seatDiameterFor(t)/2 + 24;
@@ -332,6 +338,11 @@ function computeRoomBounds(cls){
     minX=Math.min(minX,d.x-r); minY=Math.min(minY,d.y-r);
     maxX=Math.max(maxX,d.x+r); maxY=Math.max(maxY,d.y+r);
   }
+  // The whiteboard sits flush against the room's top edge — fold it in so the fit/export
+  // viewBox hugs it too instead of leaving a gap above it.
+  const wb = computeWhiteboardRect(cls);
+  minX = Math.min(minX, wb.x); maxX = Math.max(maxX, wb.x+wb.w);
+  minY = Math.min(minY, wb.y);
   return {minX,minY,maxX,maxY};
 }
 function computeFitViewBox(cls){
@@ -345,18 +356,21 @@ function computeFitViewBox(cls){
 function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
 // A large, centered feature spanning most of the room's width (from its walls, if any) —
 // meant to read as an actual whiteboard, not a thin label strip. Font/height scale with it.
+// Positioned with its bottom edge flush against the room's actual top wall edge (not a fixed
+// y) so the carpet and whiteboard read as one continuous rectangle with no gap between them.
 function computeWhiteboardRect(cls){
-  let minX = 0, maxX = BASE_ROOM_W;
+  let minX = 0, maxX = BASE_ROOM_W, wallMinY = 0;
   if(cls.walls && cls.walls.length){
     minX = Math.min(...cls.walls.map(w=>w.x));
     maxX = Math.max(...cls.walls.map(w=>w.x+w.w));
+    wallMinY = Math.min(...cls.walls.map(w=>w.y));
   }
   const roomW = maxX - minX;
   const w = Math.max(roomW * 0.9, Math.min(roomW, 100));
   const x = minX + (roomW - w)/2;
   const h = clamp(roomW * 0.09, 36, 130);
   const fontSize = clamp(roomW * 0.02, 12, 30);
-  return { x, y:8, w, h, fontSize };
+  return { x, y: wallMinY - h, w, h, fontSize };
 }
 
 // Drawn as an actual whiteboard (dark frame + white surface), not a thin label bar.
@@ -1657,18 +1671,38 @@ document.getElementById('exportBtn').onclick = () => {
   a.click();
 };
 
-// Rasterizes the currently-rendered Present SVG at its own tightly-fit viewBox — the
-// exported PNG's pixel size matches the room content exactly, with no extra canvas margin.
+// A minimal-padding crop of the room+whiteboard content, used for PNG export instead of the
+// on-screen Present viewBox (which keeps a comfortable 60-unit margin for display). Present's
+// rendered elements are positioned in room-cm coordinates and, when flipped (teacher view),
+// mirrored around the on-screen fit viewBox's center — so mirror the same crop box around that
+// same center rather than recomputing independently, to stay pixel-exact with what's rendered.
+function computeExportViewBox(cls, flip){
+  const b = computeRoomBounds(cls);
+  const pad = 6;
+  let x = b.minX - pad, y = b.minY - pad;
+  let w = (b.maxX - b.minX) + pad*2, h = (b.maxY - b.minY) + pad*2;
+  if(flip){
+    const pvb = computeFitViewBox(cls);
+    const cx = pvb.x + pvb.w/2, cy = pvb.y + pvb.h/2;
+    const nx1 = 2*cx - (x+w), nx2 = 2*cx - x;
+    const ny1 = 2*cy - (y+h), ny2 = 2*cy - y;
+    x = Math.min(nx1, nx2); y = Math.min(ny1, ny2);
+  }
+  return { x, y, w, h };
+}
+// Rasterizes the currently-rendered Present SVG at a crop tight to the room content — the
+// exported PNG's pixel size matches it exactly, with no dead space around the edges.
 // Page CSS (classes + the --accent-dark etc custom properties) is inlined into the SVG
 // since a standalone SVG document loaded via Image() has no access to the page stylesheet.
 function exportPresentPng(){
   const cls = getClass();
   if(!cls) return;
-  const vb = (presentSvg.getAttribute('viewBox') || '0 0 1000 640').split(/\s+/).map(Number);
-  const [vx, vy, vw, vh] = vb;
+  const evb = computeExportViewBox(cls, presentView === 'teacher');
+  const [vx, vy, vw, vh] = [evb.x, evb.y, evb.w, evb.h];
   const scale = 2;
   const clone = presentSvg.cloneNode(true);
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.setAttribute('viewBox', `${vx} ${vy} ${vw} ${vh}`);
   clone.setAttribute('width', vw * scale);
   clone.setAttribute('height', vh * scale);
   const styleEl = document.createElementNS(SVG_NS, 'style');
