@@ -182,6 +182,10 @@
         <button id="clearSeatsBtn" style="flex:1;">Clear Seats</button>
       </div>
       <div class="hint" id="capacityHint" style="margin-top:6px;"></div>
+      <div class="hint" id="historyHint" style="margin-top:6px;" title="Every time you open Present view, that seating is remembered so future 🎲 Generate runs steer away from repeat partners."></div>
+      <div class="row" style="margin-top:6px;">
+        <button id="resetHistoryBtn" style="flex:1;font-size:12px;">🔁 Reset Pairing History</button>
+      </div>
     </div>
 
     <div class="panel" id="pairAssistPanel" style="display:none;">
@@ -252,6 +256,7 @@
     <span class="hint" id="presentHint"></span>
     <span style="margin-left:auto;"></span>
     <button id="presentPrintBtn">🖨️ Print</button>
+    <button id="presentPngBtn">🖼️ Export PNG</button>
     <button id="presentCloseBtn">✕ Close</button>
   </div>
   <div class="present-canvas-wrap">
@@ -399,6 +404,39 @@ function saveDB(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); }
 
 function getClass(){ return db.classes.find(c => c.id === currentClassId) || db.classes[0]; }
 function relKey(a,b){ return [a,b].sort().join('|'); }
+
+// ---------- pairing history (avoid repeat tablemates week to week) ----------
+// cls.pairHistory maps relKey(a,b) -> number of times a & b have shared a table, recorded
+// once per seating arrangement the teacher actually presented (not every 🎲 re-roll).
+function pairHistoryCount(cls, a, b){
+  return (cls.pairHistory && cls.pairHistory[relKey(a,b)]) || 0;
+}
+function assignmentsSignature(cls){
+  return JSON.stringify(Object.entries(cls.assignments || {}).sort());
+}
+function recordSeatingHistory(cls){
+  if(!cls.assignments || !Object.keys(cls.assignments).length) return;
+  const sig = assignmentsSignature(cls);
+  if(cls.lastHistorySignature === sig) return;
+  if(!cls.pairHistory) cls.pairHistory = {};
+  const byTable = {};
+  for(const seat of allSeatsWithWorld(cls)){
+    const stuId = cls.assignments[seat.id];
+    if(!stuId) continue;
+    (byTable[seat.tableId] = byTable[seat.tableId] || []).push(stuId);
+  }
+  for(const tableId in byTable){
+    const group = byTable[tableId];
+    for(let i=0;i<group.length;i++){
+      for(let j=i+1;j<group.length;j++){
+        const key = relKey(group[i], group[j]);
+        cls.pairHistory[key] = (cls.pairHistory[key]||0) + 1;
+      }
+    }
+  }
+  cls.lastHistorySignature = sig;
+  saveDB();
+}
 function shuffle(arr){
   const a = arr.slice();
   for(let i=a.length-1;i>0;i--){
@@ -607,6 +645,7 @@ function generateGroupSeating(cls){
           const rel = cls.relationships[relKey(stu.id, nbStu)];
           if(rel === 'red') penalty += 1000;
           else if(rel === 'yellow') penalty += 5;
+          penalty += pairHistoryCount(cls, stu.id, nbStu) * 8;
         }
         if(penalty < bestPenalty){ bestPenalty = penalty; ties = [seatId]; }
         else if(penalty === bestPenalty){ ties.push(seatId); }
@@ -647,7 +686,8 @@ function generatePairSeating(cls){
       let bestPen = Infinity, ties = [];
       for(let i=0;i<pool.length;i++){
         const rel = cls.relationships[relKey(a.id, pool[i].id)];
-        const pen = rel==='red' ? 1000 : rel==='yellow' ? 5 : rel==='green' ? -2 : 0;
+        const pen = (rel==='red' ? 1000 : rel==='yellow' ? 5 : rel==='green' ? -2 : 0)
+          + pairHistoryCount(cls, a.id, pool[i].id) * 8;
         if(pen < bestPen){ bestPen = pen; ties = [i]; }
         else if(pen === bestPen) ties.push(i);
       }
@@ -737,7 +777,9 @@ function autoPairStudent(cls, stu){
   const greens = partners.filter(p => cls.relationships[relKey(stu.id,p.id)] === 'green');
   const nonYellow = partners.filter(p => cls.relationships[relKey(stu.id,p.id)] !== 'yellow');
   const pool = greens.length ? greens : (nonYellow.length ? nonYellow : partners);
-  const partner = pool[Math.floor(Math.random()*pool.length)];
+  const minHistory = Math.min(...pool.map(p => pairHistoryCount(cls, stu.id, p.id)));
+  const freshPool = pool.filter(p => pairHistoryCount(cls, stu.id, p.id) === minHistory);
+  const partner = freshPool[Math.floor(Math.random()*freshPool.length)];
   if(!seatPairInFreeSlot(cls, stu, partner)){ alert("No empty adjacent seats available to place this pair."); return; }
   saveDB(); render();
 }
@@ -871,6 +913,11 @@ function renderStudents(cls){
 
   document.getElementById('capacityHint').textContent =
     `${cls.students.length} student${cls.students.length===1?'':'s'} · ${allSeatsWithWorld(cls).length} seats`;
+
+  const pairedCount = Object.keys(cls.pairHistory || {}).length;
+  document.getElementById('historyHint').textContent = pairedCount
+    ? `🔁 Remembering ${pairedCount} past pairing${pairedCount===1?'':'s'} — Generate steers away from repeats.`
+    : `🔁 No pairing history yet — recorded each time you open Present view.`;
 }
 
 function renderPairAssist(cls){
@@ -1294,6 +1341,13 @@ document.getElementById('clearSeatsBtn').onclick = () => {
   getClass().assignments = {};
   saveDB(); render();
 };
+document.getElementById('resetHistoryBtn').onclick = () => {
+  const cls = getClass();
+  if(!confirm('Forget all remembered pairings for this class? Future seating generation will no longer avoid past partners.')) return;
+  cls.pairHistory = {};
+  cls.lastHistorySignature = null;
+  saveDB(); render();
+};
 
 document.getElementById('editRoomBtn').onclick = () => {
   editRoomMode = !editRoomMode;
@@ -1426,6 +1480,7 @@ const presentSvg = document.getElementById('presentSvg');
 
 function openPresent(){
   if(!getClass()){ alert('No classes yet — add a class first.'); return; }
+  recordSeatingHistory(getClass());
   presentView = 'student';
   document.body.classList.add('presenting');
   document.getElementById('presentOverlay').classList.add('open');
@@ -1435,6 +1490,7 @@ function closePresent(){
   document.body.classList.remove('presenting');
   document.getElementById('presentOverlay').classList.remove('open');
   if(!isUnlocked()) showLock();
+  else render();
 }
 function renderPresent(){
   const cls = getClass();
@@ -1593,12 +1649,55 @@ document.getElementById('viewStudentBtn').onclick = () => { presentView='student
 document.getElementById('viewTeacherBtn').onclick = () => { presentView='teacher'; renderPresent(); };
 
 document.getElementById('exportBtn').onclick = () => {
+  const cls = getClass();
   const blob = new Blob([JSON.stringify(db, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'seating-plan.json';
+  a.download = `${(cls ? cls.name : 'seating-plan')} template.json`;
   a.click();
 };
+
+// Rasterizes the currently-rendered Present SVG at its own tightly-fit viewBox — the
+// exported PNG's pixel size matches the room content exactly, with no extra canvas margin.
+// Page CSS (classes + the --accent-dark etc custom properties) is inlined into the SVG
+// since a standalone SVG document loaded via Image() has no access to the page stylesheet.
+function exportPresentPng(){
+  const cls = getClass();
+  if(!cls) return;
+  const vb = (presentSvg.getAttribute('viewBox') || '0 0 1000 640').split(/\s+/).map(Number);
+  const [vx, vy, vw, vh] = vb;
+  const scale = 2;
+  const clone = presentSvg.cloneNode(true);
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.setAttribute('width', vw * scale);
+  clone.setAttribute('height', vh * scale);
+  const styleEl = document.createElementNS(SVG_NS, 'style');
+  styleEl.textContent = document.querySelector('style').textContent;
+  clone.insertBefore(styleEl, clone.firstChild);
+  const xml = new XMLSerializer().serializeToString(clone);
+  const svgBlob = new Blob([xml], {type:'image/svg+xml;charset=utf-8'});
+  const url = URL.createObjectURL(svgBlob);
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = vw * scale; canvas.height = vh * scale;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(url);
+    canvas.toBlob((blob) => {
+      const a = document.createElement('a');
+      const date = new Date().toISOString().slice(0, 10);
+      a.href = URL.createObjectURL(blob);
+      a.download = `${cls.name} ${date}.png`;
+      a.click();
+    }, 'image/png');
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); alert('Could not export PNG.'); };
+  img.src = url;
+}
+document.getElementById('presentPngBtn').onclick = exportPresentPng;
 document.getElementById('importBtn').onclick = () => document.getElementById('importFile').click();
 document.getElementById('importFile').onchange = (e) => {
   const file = e.target.files[0];
