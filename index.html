@@ -53,10 +53,10 @@
   svg#canvas{display:block;background:
     linear-gradient(#fff,#fff);
     cursor:default;}
-  svg#canvas .grid-line{stroke:#eef1f5;stroke-width:1;pointer-events:none;}
-  .wall-rect{fill:#e7ecf3;stroke:#a9b6c6;stroke-width:2;}
+  svg#canvas .grid-line{stroke:rgba(255,255,255,.4);stroke-width:1;pointer-events:none;}
+  .wall-rect{fill:#eef1f5;stroke:#9aa5b3;stroke-width:2;}
   .wall-rect.selected{stroke:var(--accent);stroke-width:3;}
-  .table-shape{fill:#fff6e0;stroke:#c69214;stroke-width:2;cursor:grab;}
+  .table-shape{fill:#f6f4ef;stroke:#a39d8f;stroke-width:2;cursor:grab;}
   .table-shape.selected{stroke:var(--accent);stroke-width:3;}
   .seat{fill:#fff;stroke:#8a94a3;stroke-width:1.5;cursor:default;}
   .seat.filled{fill:#dbe8ff;stroke:var(--accent-dark);}
@@ -72,6 +72,18 @@
   .partner-row .avail{font-size:11px;color:var(--muted);}
   small.field-label{display:block;font-size:11px;color:var(--muted);margin-bottom:2px;}
   footer{padding:6px 16px;font-size:11px;color:var(--muted);}
+  .present-overlay{display:none;position:fixed;inset:0;background:#fff;z-index:1000;flex-direction:column;}
+  .present-overlay.open{display:flex;}
+  .present-bar{display:flex;gap:10px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);}
+  .present-bar strong{font-size:16px;}
+  .present-canvas-wrap{flex:1;display:flex;align-items:center;justify-content:center;overflow:auto;background:#f8fafc;}
+  #presentSvg{background:#fff;box-shadow:0 0 0 1px var(--border);max-width:100%;height:auto;}
+  @media print{
+    body.presenting > header, body.presenting > .main, body.presenting > footer{display:none !important;}
+    body.presenting .present-bar{display:none !important;}
+    body.presenting .present-overlay{position:static !important;}
+    body.presenting .present-canvas-wrap{overflow:visible;}
+  }
 </style>
 </head>
 <body>
@@ -143,9 +155,8 @@
       <span class="hint" id="roomHint" style="display:none;">Drag on empty canvas to add a wall block. Click a block then Delete to remove it.</span>
       <div class="sep"></div>
       <button id="addRectGroupBtn">+ Rect Group Table (4)</button>
-      <button id="addRectPairBtn">+ Rect Pair Desk (2)</button>
-      <button id="addHexGroupBtn">+ Octagon Group Table (4)</button>
-      <button id="addHexPairBtn">+ Octagon Pair Desk (2)</button>
+      <button id="addRectPairBtn">+ Rect Pair Desk (2, same side)</button>
+      <button id="addOctaHalfBtn">+ Half-Octagon Table (3, joins to seat 6)</button>
       <div class="sep"></div>
       <span class="row" id="selectedTableBar" style="display:none;">
         <span class="hint">Selected table:</span>
@@ -157,6 +168,8 @@
         <button id="rotCWBtn" class="small">⟳</button>
         <button id="deleteTableBtn" class="small danger">Delete</button>
       </span>
+      <div class="sep"></div>
+      <button id="presentBtn">🖥️ Present / Print View</button>
     </div>
     <div class="canvas-wrap">
       <svg id="canvas" width="1000" height="640" viewBox="0 0 1000 640"></svg>
@@ -165,13 +178,33 @@
 </div>
 <footer>Data is saved automatically in this browser. Use Export/Import to move a plan between computers.</footer>
 
+<div class="present-overlay" id="presentOverlay">
+  <div class="present-bar">
+    <strong id="presentTitle">Class</strong>
+    <div class="mode-toggle" style="width:240px;">
+      <button id="viewStudentBtn">Student View</button>
+      <button id="viewTeacherBtn">Teacher View</button>
+    </div>
+    <span class="hint" id="presentHint"></span>
+    <span style="margin-left:auto;"></span>
+    <button id="presentPrintBtn">🖨️ Print</button>
+    <button id="presentCloseBtn">✕ Close</button>
+  </div>
+  <div class="present-canvas-wrap">
+    <svg id="presentSvg" width="1000" height="640" viewBox="0 0 1000 640"></svg>
+  </div>
+</div>
+
 <script>
 (function(){
 "use strict";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const STORAGE_KEY = "seatingPlanGenerator.v1";
+const STORAGE_KEY = "seatingPlanGenerator.v2";
 const ADJ_THRESHOLD = 95; // px: seats within this distance (or on same table) count as "close"
+const SEAT_R = 18;
+const SEAT_OFFSET = 17;
+const ROOM_W = 1000, ROOM_H = 640;
 
 // ---------- state ----------
 let db = loadDB();
@@ -220,22 +253,24 @@ function rotatePoint(x,y,rad){
 }
 
 // ---------- geometry ----------
-function tableLocalVerts(t){
-  const w=t.w, h=t.h;
-  if(t.shape === 'rect'){
-    return [{x:-w/2,y:-h/2},{x:w/2,y:-h/2},{x:w/2,y:h/2},{x:-w/2,y:h/2}];
-  }
-  const bevel = Math.min(w,h) * 0.28;
+// octaHalf tables are literally half of an octagon: a flat "join" edge (top, in local
+// space) where two halves push together to form a full hexagon/octagon pod seating 6,
+// and a beveled outer edge (bottom) where its own 3 seats sit.
+function octaHalfLocalVerts(w,h){
+  const bevel = Math.min(w,h) * 0.4;
   return [
-    {x:-w/2+bevel, y:-h/2},
-    {x: w/2-bevel, y:-h/2},
-    {x: w/2, y:-h/2+bevel},
+    {x:-w/2, y:-h/2},
+    {x: w/2, y:-h/2},
     {x: w/2, y: h/2-bevel},
     {x: w/2-bevel, y: h/2},
     {x:-w/2+bevel, y: h/2},
     {x:-w/2, y: h/2-bevel},
-    {x:-w/2, y:-h/2+bevel},
   ];
+}
+function tableLocalVerts(t){
+  if(t.shape === 'octaHalf') return octaHalfLocalVerts(t.w, t.h);
+  const w=t.w, h=t.h;
+  return [{x:-w/2,y:-h/2},{x:w/2,y:-h/2},{x:w/2,y:h/2},{x:-w/2,y:h/2}];
 }
 function tableWorldVerts(t){
   const rad = deg2rad(t.rot);
@@ -260,16 +295,40 @@ function tableEdgesWorld(t){
   return edges;
 }
 function seatLocalSlots(t){
-  const w=t.w, h=t.h, n=t.seatsPerSide||2;
-  const margin = Math.min(w*0.18, 22);
+  if(t.shape === 'octaHalf') return octaHalfSeatSlots(t);
+  return rectSeatSlots(t);
+}
+function rectSeatSlots(t){
+  const w=t.w, h=t.h;
+  const edges = t.seatEdges || [0,1];
+  const n = t.seatsPerEdge || 2;
+  const margin = Math.min(w*0.18, 24);
   const slots = [];
-  for(let side=0; side<2; side++){
-    const y = side===0 ? -h/2-16 : h/2+16;
+  for(const side of edges){
+    const y = side===0 ? -h/2-SEAT_OFFSET : h/2+SEAT_OFFSET;
     for(let i=0;i<n;i++){
       const frac = n===1 ? 0.5 : (i+0.5)/n;
       const x = -w/2+margin + frac*(w-2*margin);
       slots.push({ id: t.id+'-s'+side+'-'+i, x, y });
     }
+  }
+  return slots;
+}
+// 3 seats along the octaHalf's beveled outer edge (skips the flat join edge), so two
+// halves snapped together at their join edge seat 6 total.
+function octaHalfSeatSlots(t){
+  const verts = octaHalfLocalVerts(t.w, t.h);
+  const outerEdgeIdx = [2, 3, 4]; // bevel-right, bottom, bevel-left
+  const slots = [];
+  for(let k=0; k<outerEdgeIdx.length; k++){
+    const i = outerEdgeIdx[k];
+    const a = verts[i], b = verts[(i+1)%verts.length];
+    const mx=(a.x+b.x)/2, my=(a.y+b.y)/2;
+    const dx=b.x-a.x, dy=b.y-a.y;
+    const len=Math.hypot(dx,dy) || 1;
+    let nx = dy/len, ny=-dx/len;
+    if(nx*(0-mx) + ny*(0-my) > 0){ nx=-nx; ny=-ny; }
+    slots.push({ id: t.id+'-o'+k, x: mx+nx*SEAT_OFFSET, y: my+ny*SEAT_OFFSET });
   }
   return slots;
 }
@@ -518,6 +577,17 @@ function el(tag, attrs, parent){
   return e;
 }
 
+function addCarpetDefs(targetSvg, patternId){
+  const defs = el('defs', {}, targetSvg);
+  const pattern = el('pattern', {id:patternId, width:40, height:40, patternUnits:'userSpaceOnUse'}, defs);
+  el('rect', {width:40, height:40, fill:'#c7cdd6'}, pattern);
+  const flecks = [
+    [6,8,1.4,'#b7bec9'], [22,4,1.1,'#d3d8de'], [14,20,1.3,'#aeb6c2'], [32,16,1,'#d3d8de'],
+    [28,30,1.4,'#b7bec9'], [4,34,1,'#d3d8de'], [18,36,1.2,'#aeb6c2'], [36,26,1.1,'#b7bec9']
+  ];
+  for(const [cx,cy,r,fill] of flecks) el('circle', {cx,cy,r,fill}, pattern);
+}
+
 function renderClassTabs(){
   const wrap = document.getElementById('classTabs');
   wrap.innerHTML = '';
@@ -627,9 +697,12 @@ function renderPairAssist(cls){
 
 function renderCanvas(cls){
   svg.innerHTML = '';
-  const bg = el('rect', {x:0,y:0,width:1000,height:640,fill:'#fbfcfe', 'data-role':'canvas-bg'}, svg);
+  addCarpetDefs(svg, 'carpetPattern');
+  const bg = el('rect', {x:0,y:0,width:1000,height:640,fill:'url(#carpetPattern)', 'data-role':'canvas-bg'}, svg);
   for(let gx=0; gx<=1000; gx+=25) el('line', {x1:gx,y1:0,x2:gx,y2:640,class:'grid-line'}, svg);
   for(let gy=0; gy<=640; gy+=25) el('line', {x1:0,y1:gy,x2:1000,y2:gy,class:'grid-line'}, svg);
+  el('rect', {x:20,y:6,width:960,height:18,fill:'#334155',rx:3,'pointer-events':'none'}, svg);
+  el('text', {x:500,y:19,'text-anchor':'middle',fill:'#fff','font-size':10,'font-weight':'bold','pointer-events':'none'}, svg).textContent = 'WHITEBOARD / FRONT OF ROOM (authoring view — use Present for teacher/student orientation)';
 
   for(const w of cls.walls){
     const r = el('rect', {
@@ -651,9 +724,13 @@ function renderCanvas(cls){
     for(const slot of seatLocalSlots(t)){
       const studentId = getAssignment(cls, slot.id);
       const student = studentId ? cls.students.find(s=>s.id===studentId) : null;
-      el('circle', {cx:slot.x, cy:slot.y, r:15, class:'seat'+(student?' filled':'')}, g);
-      const label = student ? initials(student.name) : '';
-      if(label) el('text', {x:slot.x, y:slot.y+4, class:'seat-label'}, g).textContent = label;
+      el('circle', {cx:slot.x, cy:slot.y, r:SEAT_R, class:'seat'+(student?' filled':'')}, g);
+      if(student){
+        // counter-rotate so names stay upright regardless of table rotation
+        const tg = el('g', {transform:`translate(${slot.x},${slot.y}) rotate(${-t.rot})`}, g);
+        const lbl = fitSeatLabel(student.name, 1);
+        el('text', {x:0, y:4, class:'seat-label', style:`font-size:${lbl.size}px`}, tg).textContent = lbl.text;
+      }
     }
 
     if(t.id===selectedTableId){
@@ -665,8 +742,14 @@ function renderCanvas(cls){
 
 }
 
-function initials(name){
-  return name.trim().split(/\s+/).map(p=>p[0]).slice(0,2).join('').toUpperCase();
+function fitSeatLabel(name, scale){
+  scale = scale || 1;
+  const n = name.length;
+  let size = 10;
+  if(n>12) size=7;
+  else if(n>9) size=8;
+  else if(n>6) size=9;
+  return { text: name, size: size*scale };
 }
 function escapeHtml(s){
   return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -836,15 +919,14 @@ document.getElementById('editRoomBtn').onclick = () => {
   render();
 };
 
-function addTable(shape, seatsPerSide, w, h){
+function addTable(shape, seatEdges, seatsPerEdge, w, h){
   const cls = getClass();
-  cls.tables.push({ id:uid(), shape, seatsPerSide, w, h, x: 200+Math.random()*200, y: 200+Math.random()*150, rot:0 });
+  cls.tables.push({ id:uid(), shape, seatEdges, seatsPerEdge, w, h, x: 200+Math.random()*200, y: 240+Math.random()*150, rot:0 });
   saveDB(); render();
 }
-document.getElementById('addRectGroupBtn').onclick = () => addTable('rect', 2, 190, 90);
-document.getElementById('addRectPairBtn').onclick = () => addTable('rect', 1, 120, 70);
-document.getElementById('addHexGroupBtn').onclick = () => addTable('hex', 2, 190, 100);
-document.getElementById('addHexPairBtn').onclick = () => addTable('hex', 1, 130, 80);
+document.getElementById('addRectGroupBtn').onclick = () => addTable('rect', [0,1], 2, 190, 90);
+document.getElementById('addRectPairBtn').onclick = () => addTable('rect', [1], 2, 150, 70);
+document.getElementById('addOctaHalfBtn').onclick = () => addTable('octaHalf', null, null, 170, 90);
 
 document.getElementById('rotCWBtn').onclick = () => {
   const cls = getClass();
@@ -866,6 +948,71 @@ document.getElementById('deleteTableBtn').onclick = () => {
   if(cls.assignments) for(const k in cls.assignments) if(k.startsWith(selectedTableId+'-')) delete cls.assignments[k];
   selectedTableId = null; saveDB(); render();
 };
+
+// ---------- present / print view ----------
+let presentView = 'student';
+const presentSvg = document.getElementById('presentSvg');
+
+function openPresent(){
+  presentView = 'student';
+  document.body.classList.add('presenting');
+  document.getElementById('presentOverlay').classList.add('open');
+  renderPresent();
+}
+function closePresent(){
+  document.body.classList.remove('presenting');
+  document.getElementById('presentOverlay').classList.remove('open');
+}
+function renderPresent(){
+  const cls = getClass();
+  document.getElementById('presentTitle').textContent = cls.name + ' — Seating Plan';
+  document.getElementById('viewStudentBtn').classList.toggle('active', presentView==='student');
+  document.getElementById('viewTeacherBtn').classList.toggle('active', presentView==='teacher');
+  document.getElementById('presentHint').textContent = presentView==='teacher'
+    ? 'Teacher view: whiteboard at the bottom, as seen facing the class.'
+    : 'Student view: whiteboard at the top, as seen facing the front.';
+
+  presentSvg.innerHTML = '';
+  addCarpetDefs(presentSvg, 'carpetPatternPresent');
+  const flip = presentView === 'teacher';
+  const fx = (x) => flip ? ROOM_W - x : x;
+  const fy = (y) => flip ? ROOM_H - y : y;
+  const frot = (r) => flip ? r + 180 : r;
+
+  el('rect', {x:0,y:0,width:ROOM_W,height:ROOM_H,fill:'url(#carpetPatternPresent)'}, presentSvg);
+  const wbY = flip ? ROOM_H - 34 : 10;
+  el('rect', {x:20,y:wbY,width:960,height:24,fill:'#334155',rx:4}, presentSvg);
+  el('text', {x:500,y:wbY+16,'text-anchor':'middle',fill:'#fff','font-size':13,'font-weight':'bold'}, presentSvg).textContent = 'WHITEBOARD / FRONT OF ROOM';
+
+  for(const w of cls.walls){
+    const nx = flip ? ROOM_W - (w.x+w.w) : w.x;
+    const ny = flip ? ROOM_H - (w.y+w.h) : w.y;
+    el('rect', {x:nx,y:ny,width:w.w,height:w.h,class:'wall-rect'}, presentSvg);
+  }
+
+  for(const t of cls.tables){
+    const tx = fx(t.x), ty = fy(t.y), trot = frot(t.rot);
+    const g = el('g', {transform:`translate(${tx},${ty}) rotate(${trot})`}, presentSvg);
+    const verts = tableLocalVerts(t).map(p=>`${p.x},${p.y}`).join(' ');
+    el('polygon', {points:verts, class:'table-shape'}, g);
+    for(const slot of seatLocalSlots(t)){
+      const studentId = getAssignment(cls, slot.id);
+      const student = studentId ? cls.students.find(s=>s.id===studentId) : null;
+      el('circle', {cx:slot.x, cy:slot.y, r:26, class:'seat'+(student?' filled':'')}, g);
+      if(student){
+        const tg = el('g', {transform:`translate(${slot.x},${slot.y}) rotate(${-trot})`}, g);
+        const lbl = fitSeatLabel(student.name, 1.9);
+        el('text', {x:0, y:5, class:'seat-label', style:`font-size:${lbl.size}px;font-weight:600;`}, tg).textContent = lbl.text;
+      }
+    }
+  }
+}
+
+document.getElementById('presentBtn').onclick = openPresent;
+document.getElementById('presentCloseBtn').onclick = closePresent;
+document.getElementById('presentPrintBtn').onclick = () => window.print();
+document.getElementById('viewStudentBtn').onclick = () => { presentView='student'; renderPresent(); };
+document.getElementById('viewTeacherBtn').onclick = () => { presentView='teacher'; renderPresent(); };
 
 document.getElementById('exportBtn').onclick = () => {
   const blob = new Blob([JSON.stringify(db, null, 2)], {type:'application/json'});
