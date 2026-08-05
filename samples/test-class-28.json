@@ -1,0 +1,326 @@
+{
+  "classes": [
+    {
+      "id": "c45",
+      "name": "Test Class (28)",
+      "students": [
+        {
+          "id": "s1",
+          "name": "Charlotte Harris"
+        },
+        {
+          "id": "s2",
+          "name": "Charlotte Lewis"
+        },
+        {
+          "id": "s3",
+          "name": "Oliver Bennett"
+        },
+        {
+          "id": "s4",
+          "name": "Oliver Grant"
+        },
+        {
+          "id": "s5",
+          "name": "Ava Thompson"
+        },
+        {
+          "id": "s6",
+          "name": "Mia Rodriguez"
+        },
+        {
+          "id": "s7",
+          "name": "Jack Chen"
+        },
+        {
+          "id": "s8",
+          "name": "Jai Nguyen"
+        },
+        {
+          "id": "s9",
+          "name": "Zoe Park"
+        },
+        {
+          "id": "s10",
+          "name": "Xavier Montgomery-Wells"
+        },
+        {
+          "id": "s11",
+          "name": "Lily Osei"
+        },
+        {
+          "id": "s12",
+          "name": "Noah Kowalski"
+        },
+        {
+          "id": "s13",
+          "name": "Ella Fitzgerald"
+        },
+        {
+          "id": "s14",
+          "name": "Leo Papadopoulos"
+        },
+        {
+          "id": "s15",
+          "name": "Grace Kim"
+        },
+        {
+          "id": "s16",
+          "name": "Henry Sato"
+        },
+        {
+          "id": "s17",
+          "name": "Ruby Alexander"
+        },
+        {
+          "id": "s18",
+          "name": "Max O'Brien"
+        },
+        {
+          "id": "s19",
+          "name": "Willow Delacroix"
+        },
+        {
+          "id": "s20",
+          "name": "Sam Patel"
+        },
+        {
+          "id": "s21",
+          "name": "Ivy Brennan"
+        },
+        {
+          "id": "s22",
+          "name": "Theo Anastasiou"
+        },
+        {
+          "id": "s23",
+          "name": "Freya Whitmore"
+        },
+        {
+          "id": "s24",
+          "name": "Kai Sullivan"
+        },
+        {
+          "id": "s25",
+          "name": "Poppy Nakamura"
+        },
+        {
+          "id": "s26",
+          "name": "Finn Doyle"
+        },
+        {
+          "id": "s27",
+          "name": "Isla Castellano"
+        },
+        {
+          "id": "s28",
+          "name": "Beau Fisher"
+        }
+      ],
+      "relationships": {},
+      "mode": "pair",
+      "walls": [
+        {
+          "id": "w43",
+          "x": 0,
+          "y": 40,
+          "w": 700,
+          "h": 1000
+        }
+      ],
+      "tables": [
+        {
+          "id": "t29",
+          "shape": "rect",
+          "seatEdges": [
+            1
+          ],
+          "seatsPerEdge": 2,
+          "w": 120,
+          "h": 61,
+          "x": 290,
+          "y": 110,
+          "rot": 0
+        },
+        {
+          "id": "t30",
+          "shape": "rect",
+          "seatEdges": [
+            1
+          ],
+          "seatsPerEdge": 2,
+          "w": 120,
+          "h": 61,
+          "x": 410,
+          "y": 110,
+          "rot": 0
+        },
+        {
+          "id": "t31",
+          "shape": "rect",
+          "seatEdges": [
+            1
+          ],
+          "seatsPerEdge": 2,
+          "w": 120,
+          "h": 61,
+          "x": 147,
+          "y": 380,
+          "rot": 0
+        },
+        {
+          "id": "t32",
+          "shape": "rect",
+          "seatEdges": [
+            1
+          ],
+          "seatsPerEdge": 2,
+          "w": 120,
+          "h": 61,
+          "x": 282,
+          "y": 380,
+          "rot": 0
+        },
+        {
+          "id": "t33",
+          "shape": "rect",
+          "seatEdges": [
+            1
+          ],
+          "seatsPerEdge": 2,
+          "w": 120,
+          "h": 61,
+          "x": 418,
+          "y": 380,
+          "rot": 0
+        },
+        {
+          "id": "t34",
+          "shape": "rect",
+          "seatEdges": [
+            1
+          ],
+          "seatsPerEdge": 2,
+          "w": 120,
+          "h": 61,
+          "x": 552,
+          "y": 380,
+          "rot": 0
+        },
+        {
+          "id": "t35",
+          "shape": "rect",
+          "seatEdges": [
+            1
+          ],
+          "seatsPerEdge": 2,
+          "w": 120,
+          "h": 61,
+          "x": 610,
+          "y": 245,
+          "rot": 0
+        },
+        {
+          "id": "t36",
+          "shape": "rect",
+          "seatEdges": [
+            1
+          ],
+          "seatsPerEdge": 2,
+          "w": 120,
+          "h": 61,
+          "x": 215,
+          "y": 650,
+          "rot": 0
+        },
+        {
+          "id": "t37",
+          "shape": "rect",
+          "seatEdges": [
+            1
+          ],
+          "seatsPerEdge": 2,
+          "w": 120,
+          "h": 61,
+          "x": 350,
+          "y": 650,
+          "rot": 0
+        },
+        {
+          "id": "t38",
+          "shape": "rect",
+          "seatEdges": [
+            1
+          ],
+          "seatsPerEdge": 2,
+          "w": 120,
+          "h": 61,
+          "x": 485,
+          "y": 650,
+          "rot": 0
+        },
+        {
+          "id": "t39",
+          "shape": "rect",
+          "seatEdges": [
+            1
+          ],
+          "seatsPerEdge": 2,
+          "w": 120,
+          "h": 61,
+          "x": 610,
+          "y": 515,
+          "rot": 0
+        },
+        {
+          "id": "t40",
+          "shape": "rect",
+          "seatEdges": [
+            1
+          ],
+          "seatsPerEdge": 2,
+          "w": 120,
+          "h": 61,
+          "x": 215,
+          "y": 920,
+          "rot": 0
+        },
+        {
+          "id": "t41",
+          "shape": "rect",
+          "seatEdges": [
+            1
+          ],
+          "seatsPerEdge": 2,
+          "w": 120,
+          "h": 61,
+          "x": 350,
+          "y": 920,
+          "rot": 0
+        },
+        {
+          "id": "t42",
+          "shape": "rect",
+          "seatEdges": [
+            1
+          ],
+          "seatsPerEdge": 2,
+          "w": 120,
+          "h": 61,
+          "x": 485,
+          "y": 920,
+          "rot": 0
+        }
+      ],
+      "doors": [
+        {
+          "id": "d44",
+          "x": 700,
+          "y": 790,
+          "rot": 270
+        }
+      ],
+      "assignments": {}
+    }
+  ]
+}
