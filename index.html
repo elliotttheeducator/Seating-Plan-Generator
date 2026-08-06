@@ -153,22 +153,6 @@
       <ul class="studentlist" id="studentList"></ul>
     </div>
 
-    <div class="panel" id="relPanel">
-      <h2>Proximity Rules</h2>
-      <small class="field-label">Red = never sit close &nbsp;·&nbsp; Yellow = avoid if possible &nbsp;·&nbsp; Green = fine together</small>
-      <div class="row wrap" style="margin-top:6px;">
-        <select id="relA"></select>
-        <select id="relB"></select>
-        <select id="relColor">
-          <option value="red">Red</option>
-          <option value="yellow">Yellow</option>
-          <option value="green">Green</option>
-        </select>
-        <button id="addRelBtn" class="primary">Set</button>
-      </div>
-      <ul class="rel-list" id="relList"></ul>
-    </div>
-
     <div class="panel">
       <h2>Mode</h2>
       <div class="mode-toggle">
@@ -182,17 +166,6 @@
         <button id="clearSeatsBtn" style="flex:1;">Clear Seats</button>
       </div>
       <div class="hint" id="capacityHint" style="margin-top:6px;"></div>
-      <div class="hint" id="historyHint" style="margin-top:6px;" title="Every time you open Present view, that seating is remembered so future 🎲 Generate runs steer away from repeat partners."></div>
-      <div class="row" style="margin-top:6px;">
-        <button id="resetHistoryBtn" style="flex:1;font-size:12px;">🔁 Reset Pairing History</button>
-      </div>
-    </div>
-
-    <div class="panel" id="pairAssistPanel" style="display:none;">
-      <h2>Pairing Assistant</h2>
-      <div class="hint">Click 🎲 next to a student to randomly pick an eligible partner and seat them together.</div>
-      <div id="pairAssistList"></div>
-      <button id="openPairsScreenBtn" class="primary" style="width:100%;margin-top:10px;">👥 Open Pairing Screen</button>
     </div>
   </div>
 
@@ -238,6 +211,7 @@
       </span>
       <div class="sep"></div>
       <button id="presentBtn">🖥️ Present / Print View</button>
+      <button id="settingsBtn">⚙️ Settings</button>
     </div>
     <div class="canvas-wrap">
       <svg id="canvas" width="1000" height="640" viewBox="0 0 1000 640"></svg>
@@ -279,6 +253,47 @@
     <div class="pairs-col">
       <h2 id="pairsCandidateTitle">2. Tick their possible pairings</h2>
       <ul class="studentlist" id="pairsCandidateList"></ul>
+    </div>
+  </div>
+</div>
+
+<div class="present-overlay" id="settingsOverlay">
+  <div class="present-bar">
+    <strong>Settings</strong>
+    <span class="hint">Proximity rules and pairing history — set-and-forget, kept out of the main view.</span>
+    <span style="margin-left:auto;"></span>
+    <button id="settingsCloseBtn">✕ Close</button>
+  </div>
+  <div class="pairs-body">
+    <div class="pairs-col" style="flex:0 0 380px;max-width:380px;">
+      <div class="panel" id="relPanel">
+        <h2>Proximity Rules</h2>
+        <small class="field-label">Red = never sit close &nbsp;·&nbsp; Yellow = avoid if possible &nbsp;·&nbsp; Green = fine together</small>
+        <div class="row wrap" style="margin-top:6px;">
+          <select id="relA"></select>
+          <select id="relB"></select>
+          <select id="relColor">
+            <option value="red">Red</option>
+            <option value="yellow">Yellow</option>
+            <option value="green">Green</option>
+          </select>
+          <button id="addRelBtn" class="primary">Set</button>
+        </div>
+        <ul class="rel-list" id="relList"></ul>
+      </div>
+      <div class="panel" style="margin-top:12px;">
+        <h2>Pairing History</h2>
+        <div class="hint" id="historyHint" title="Every time you open Present view, that seating is remembered so future 🎲 Generate runs steer away from repeat partners."></div>
+        <div class="row" style="margin-top:6px;">
+          <button id="resetHistoryBtn" style="flex:1;font-size:12px;">🔁 Reset Pairing History</button>
+        </div>
+      </div>
+    </div>
+    <div class="pairs-col" id="pairAssistPanel" style="display:none;">
+      <h2>Pairing Assistant</h2>
+      <div class="hint">Click 🎲 next to a student to randomly pick an eligible partner and seat them together.</div>
+      <div id="pairAssistList"></div>
+      <button id="openPairsScreenBtn" class="primary" style="width:100%;margin-top:10px;">👥 Open Pairing Screen</button>
     </div>
   </div>
 </div>
@@ -1598,11 +1613,21 @@ let pairsSelectedId = null;
 
 function openPairs(){
   pairsSelectedId = null;
+  document.getElementById('settingsOverlay').classList.remove('open');
   document.getElementById('pairsOverlay').classList.add('open');
   renderPairsScreen();
 }
 function closePairs(){
   document.getElementById('pairsOverlay').classList.remove('open');
+}
+
+// ---------- settings (proximity rules, pairing history) — kept out of the default view ----------
+function openSettings(){
+  document.getElementById('settingsOverlay').classList.add('open');
+  render();
+}
+function closeSettings(){
+  document.getElementById('settingsOverlay').classList.remove('open');
 }
 function renderPairsScreen(){
   const cls = getClass();
@@ -1679,6 +1704,9 @@ function renderPairsScreen(){
 
 document.getElementById('openPairsScreenBtn').onclick = openPairs;
 document.getElementById('pairsCloseBtn').onclick = closePairs;
+
+document.getElementById('settingsBtn').onclick = openSettings;
+document.getElementById('settingsCloseBtn').onclick = closeSettings;
 
 document.getElementById('presentBtn').onclick = openPresent;
 document.getElementById('presentCloseBtn').onclick = closePresent;
