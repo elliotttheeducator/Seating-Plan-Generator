@@ -372,6 +372,19 @@ function computeWhiteboardRect(cls){
   const fontSize = clamp(roomW * 0.02, 12, 30);
   return { x, y: wallMinY - h, w, h, fontSize };
 }
+// A carpet-filled strip spanning the room's full width, from the whiteboard's top edge down
+// to the walls' top edge. The whiteboard itself is only ~90% of that width, so without this
+// the narrow sliver flanking it would show bare page background instead of floor — this fills
+// it in so the room + whiteboard read as one unbroken rectangle, no border/background showing.
+function computeHeaderStripRect(cls){
+  if(!cls.walls || !cls.walls.length) return null;
+  const wallMinX = Math.min(...cls.walls.map(w=>w.x));
+  const wallMaxX = Math.max(...cls.walls.map(w=>w.x+w.w));
+  const wallMinY = Math.min(...cls.walls.map(w=>w.y));
+  const wb = computeWhiteboardRect(cls);
+  if(wb.y >= wallMinY) return null;
+  return { x: wallMinX, y: wb.y, w: wallMaxX - wallMinX, h: wallMinY - wb.y };
+}
 
 // Drawn as an actual whiteboard (dark frame + white surface), not a thin label bar.
 function drawWhiteboard(parent, x, y, w, h, fontSize){
@@ -985,6 +998,10 @@ function renderCanvas(cls){
     el('rect', {x:drag.rx,y:drag.ry,width:drag.rw,height:drag.rh,style:'fill:url(#carpetPattern)',class:'wall-rect',opacity:.6}, svg);
   }
 
+  const headerStrip = computeHeaderStripRect(cls);
+  if(headerStrip){
+    el('rect', {x:headerStrip.x, y:headerStrip.y, width:headerStrip.w, height:headerStrip.h, style:'fill:url(#carpetPattern)', 'pointer-events':'none'}, svg);
+  }
   const wb = computeWhiteboardRect(cls);
   drawWhiteboard(svg, wb.x, wb.y, wb.w, wb.h, wb.fontSize);
 
@@ -1537,6 +1554,13 @@ function renderPresent(){
     el('rect', {x:nx,y:ny,width:w.w,height:w.h,style:'fill:url(#carpetPatternPresent)',class:'wall-rect'}, presentSvg);
   }
 
+  const headerStrip = computeHeaderStripRect(cls);
+  if(headerStrip){
+    const hx = flip ? 2*cx - (headerStrip.x+headerStrip.w) : headerStrip.x;
+    const hy = flip ? 2*cy - (headerStrip.y+headerStrip.h) : headerStrip.y;
+    el('rect', {x:hx, y:hy, width:headerStrip.w, height:headerStrip.h, style:'fill:url(#carpetPatternPresent)'}, presentSvg);
+  }
+
   const wb = computeWhiteboardRect(cls);
   const wbH = wb.h * 1.15, wbFont = wb.fontSize * 1.15;
   const wbX = flip ? 2*cx - (wb.x+wb.w) : wb.x;
@@ -1678,7 +1702,7 @@ document.getElementById('exportBtn').onclick = () => {
 // same center rather than recomputing independently, to stay pixel-exact with what's rendered.
 function computeExportViewBox(cls, flip){
   const b = computeRoomBounds(cls);
-  const pad = 6;
+  const pad = 2;
   let x = b.minX - pad, y = b.minY - pad;
   let w = (b.maxX - b.minX) + pad*2, h = (b.maxY - b.minY) + pad*2;
   if(flip){
