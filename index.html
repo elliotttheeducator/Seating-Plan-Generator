@@ -184,6 +184,7 @@
       <button id="addRectGroupBtn">+ Rect Group Table (4)</button>
       <button id="addRectPairBtn">+ Rect Pair Desk (2, same side)</button>
       <button id="addHexBtn">+ Hexagon Table (6)</button>
+      <button id="addSoloBtn">+ Solo Desk (1)</button>
       <button id="addDoorBtn">+ Door</button>
       <div class="sep"></div>
       <span class="row" style="gap:4px;">
@@ -207,6 +208,9 @@
         </select>
         <button id="rotCCWBtn" class="small">⟲</button>
         <button id="rotCWBtn" class="small">⟳</button>
+        <span id="soloLockBar" style="display:none;">
+          <label class="hint">🔒 Locked to <select id="soloStudentSelect"><option value="">— none —</option></select></label>
+        </span>
         <button id="deleteTableBtn" class="small danger">Delete</button>
       </span>
       <div class="sep"></div>
@@ -274,14 +278,13 @@
     <div class="pairs-col" style="flex:0 0 380px;max-width:380px;">
       <div class="panel" id="relPanel">
         <h2>Proximity Rules</h2>
-        <small class="field-label">Red = never sit close &nbsp;·&nbsp; Yellow = avoid if possible &nbsp;·&nbsp; Green = fine together</small>
+        <small class="field-label">Everyone's fine together by default — only set the exceptions: Red = never sit close &nbsp;·&nbsp; Yellow = avoid if possible</small>
         <div class="row wrap" style="margin-top:6px;">
           <select id="relA"></select>
           <select id="relB"></select>
           <select id="relColor">
             <option value="red">Red</option>
             <option value="yellow">Yellow</option>
-            <option value="green">Green</option>
           </select>
           <button id="addRelBtn" class="primary">Set</button>
         </div>
@@ -295,11 +298,12 @@
         </div>
       </div>
     </div>
-    <div class="pairs-col" id="pairAssistPanel" style="display:none;">
-      <h2>Pairing Assistant</h2>
-      <div class="hint">Click 🎲 next to a student to randomly pick an eligible partner and seat them together.</div>
-      <div id="pairAssistList"></div>
-      <button id="openPairsScreenBtn" class="primary" style="width:100%;margin-top:10px;">👥 Open Pairing Screen</button>
+    <div class="pairs-col">
+      <div class="panel">
+        <h2>Potential Pairings</h2>
+        <div class="hint">Pick a student and tick who they'd be a good match with — ticks work for already-seated students too, so updates here take effect on the next 🎲 Generate rather than the current seating.</div>
+        <button id="openPairsScreenBtn" class="primary" style="width:100%;margin-top:10px;">👥 Open Pairing Screen</button>
+      </div>
     </div>
   </div>
 </div>
@@ -609,12 +613,47 @@ function allSeatsWithWorld(cls, tables){
 // Capacity is the primary signal (not just the preset tag) since plenty of existing tables —
 // including hand-drawn or older/imported ones — are clearly 2-seat desks without ever having
 // had a preset recorded on them.
-function isPairDeskTable(t){ return t.preset === 'rectPair' || seatLocalSlots(t).length <= 2; }
+// Solo desks (single locked seat) sit outside the pair/group system entirely — they're never
+// offered to either mode's generation, so the student pinned there never gets reshuffled.
+function isSoloDesk(t){ return t.preset === 'solo'; }
+function isPairDeskTable(t){ return !isSoloDesk(t) && (t.preset === 'rectPair' || seatLocalSlots(t).length <= 2); }
 function tablesForMode(cls, mode){
-  const pairT = cls.tables.filter(isPairDeskTable);
-  const groupT = cls.tables.filter(t => !isPairDeskTable(t));
-  if(mode === 'pair') return pairT.length ? pairT : cls.tables;
-  return groupT.length ? groupT : cls.tables;
+  const seatable = cls.tables.filter(t => !isSoloDesk(t));
+  const pairT = seatable.filter(isPairDeskTable);
+  const groupT = seatable.filter(t => !isPairDeskTable(t));
+  if(mode === 'pair') return pairT.length ? pairT : seatable;
+  return groupT.length ? groupT : seatable;
+}
+// Students pinned to a solo desk are excluded from Generate/relocate entirely — they're
+// already placed, and stay there until unlocked or moved manually.
+function lockedStudentIds(cls){
+  return new Set(cls.tables.filter(isSoloDesk).map(t=>t.lockedStudentId).filter(Boolean));
+}
+function generatableStudents(cls){
+  const locked = lockedStudentIds(cls);
+  return cls.students.filter(s => !locked.has(s.id));
+}
+// Re-applies every solo desk's locked seat after a wholesale cls.assignments replace (Generate
+// and the Lab Mode relocation both rebuild the assignments map from scratch).
+function reapplyLockedSeats(cls){
+  if(!cls.assignments) cls.assignments = {};
+  for(const t of cls.tables){
+    if(!isSoloDesk(t) || !t.lockedStudentId) continue;
+    const slot = seatLocalSlots(t)[0];
+    if(slot) cls.assignments[slot.id] = t.lockedStudentId;
+  }
+}
+// Assigns (or clears, if studentId is falsy) the one student a solo desk is locked to. Removes
+// them from wherever else they were sitting first, since a student can only be in one seat.
+function setSoloDeskStudent(cls, t, studentId){
+  if(!cls.assignments) cls.assignments = {};
+  const slot = seatLocalSlots(t)[0];
+  if(slot) delete cls.assignments[slot.id];
+  if(studentId){
+    for(const seatId in cls.assignments) if(cls.assignments[seatId] === studentId) delete cls.assignments[seatId];
+  }
+  t.lockedStudentId = studentId || null;
+  if(studentId && slot) cls.assignments[slot.id] = studentId;
 }
 function buildAdjacency(cls, seats){
   const adj = {};
@@ -730,13 +769,14 @@ function fixSingletonGroupTables(assign, usedTables){
   }
 }
 function generateGroupSeating(cls){
+  const students = generatableStudents(cls);
   const targetTables = tablesForMode(cls, 'group');
-  const usedTables = computeGroupTablePlan(cls.students.length, targetTables);
+  const usedTables = computeGroupTablePlan(students.length, targetTables);
   const seats = allSeatsWithWorld(cls, usedTables);
   const adj = buildAdjacency(cls, seats);
   const seatIds = seats.map(s=>s.id);
-  if(cls.students.length > seatIds.length){
-    alert(`Not enough seats: ${cls.students.length} students but only ${seatIds.length} seats.`);
+  if(students.length > seatIds.length){
+    alert(`Not enough seats: ${students.length} students but only ${seatIds.length} seats.`);
     return;
   }
   let bestAssign = null, bestScore = Infinity;
@@ -744,7 +784,7 @@ function generateGroupSeating(cls){
   for(let t=0;t<TRIALS;t++){
     const assign = {};
     const seatOrder = shuffle(seatIds);
-    const studentOrder = shuffle(cls.students);
+    const studentOrder = shuffle(students);
     let score = 0;
     for(const stu of studentOrder){
       let bestPenalty = Infinity, ties = [];
@@ -770,15 +810,17 @@ function generateGroupSeating(cls){
   }
   fixSingletonGroupTables(bestAssign, usedTables);
   cls.assignments = bestAssign;
+  reapplyLockedSeats(cls);
   if(bestScore >= 1000) alert("Could not satisfy all red (never-sit-close) rules with the current layout — placed the best possible arrangement, please review the highlighted seating.");
 }
 
 function generatePairSeating(cls){
+  const students = generatableStudents(cls);
   const seats = allSeatsWithWorld(cls, tablesForMode(cls, 'pair'));
   const adj = buildAdjacency(cls, seats);
   const seatIds = seats.map(s=>s.id);
-  if(cls.students.length > seatIds.length){
-    alert(`Not enough seats: ${cls.students.length} students but only ${seatIds.length} seats.`);
+  if(students.length > seatIds.length){
+    alert(`Not enough seats: ${students.length} students but only ${seatIds.length} seats.`);
     return;
   }
   const slotSet = new Set(); const slotPairs = [];
@@ -792,7 +834,7 @@ function generatePairSeating(cls){
   }
   let bestPairing = null, bestPScore = Infinity;
   for(let t=0;t<150;t++){
-    const pool = shuffle(cls.students);
+    const pool = shuffle(students);
     const pairs = []; let score = 0;
     while(pool.length > 1){
       const a = pool.pop();
@@ -856,6 +898,7 @@ function generatePairSeating(cls){
   }
   if(!bestPlacement){ alert("Could not find a valid pair arrangement — try adding more tables or loosening rules."); return; }
   cls.assignments = bestPlacement;
+  reapplyLockedSeats(cls);
   if(bestScore2 >= 1000 || bestPScore >= 1000) alert("Could not satisfy all red (never-sit-close) rules with the current layout — placed the best possible arrangement, please review the highlighted seating.");
 }
 
@@ -868,7 +911,7 @@ function generatePairSeating(cls){
 // whoever isn't currently seated at all.
 function currentSeatingUnits(cls){
   const byTable = {};
-  for(const seat of allSeatsWithWorld(cls)){
+  for(const seat of allSeatsWithWorld(cls, cls.tables.filter(t => !isSoloDesk(t)))){
     const stuId = cls.assignments && cls.assignments[seat.id];
     if(!stuId) continue;
     (byTable[seat.tableId] = byTable[seat.tableId] || []).push({ stuId, x:seat.x, y:seat.y });
@@ -883,7 +926,8 @@ function currentSeatingUnits(cls){
     });
   }
   const seatedIds = new Set(units.flatMap(u=>u.studentIds));
-  const unseated = cls.students.filter(s => !seatedIds.has(s.id));
+  const locked = lockedStudentIds(cls);
+  const unseated = cls.students.filter(s => !seatedIds.has(s.id) && !locked.has(s.id));
   return { units, unseated };
 }
 // Each pair-desk table is claimed by exactly one unit (nearest desk first, greedily).
@@ -975,46 +1019,9 @@ function setClassMode(cls, newMode){
     } else {
       placeUnitsOnGroupTables(cls, units.concat(unseatedUnits), targetTables);
     }
+    reapplyLockedSeats(cls);
   }
   cls.mode = newMode;
-}
-
-// Finds an empty pair of adjacent seats and seats (a,b) there. Returns false if none free.
-function seatPairInFreeSlot(cls, a, b){
-  const seats = allSeatsWithWorld(cls);
-  const adj = buildAdjacency(cls, seats);
-  const emptyIds = new Set(seats.filter(s => !getAssignment(cls, s.id)).map(s=>s.id));
-  const candidates = [];
-  const seen = new Set();
-  for(const id of emptyIds){
-    for(const nb of adj[id]){
-      if(!emptyIds.has(nb)) continue;
-      const key = [id,nb].sort().join('~');
-      if(seen.has(key)) continue;
-      seen.add(key);
-      candidates.push([id,nb]);
-    }
-  }
-  if(!candidates.length) return false;
-  const [s1,s2] = candidates[Math.floor(Math.random()*candidates.length)];
-  setAssignment(cls, s1, a.id);
-  setAssignment(cls, s2, b.id);
-  return true;
-}
-
-function autoPairStudent(cls, stu){
-  if(isSeated(cls, stu.id)) return;
-  const partners = cls.students.filter(s => s.id !== stu.id && !isSeated(cls, s.id) &&
-    cls.relationships[relKey(stu.id, s.id)] !== 'red');
-  if(!partners.length){ alert(`No available partners for ${stu.name}.`); return; }
-  const greens = partners.filter(p => cls.relationships[relKey(stu.id,p.id)] === 'green');
-  const nonYellow = partners.filter(p => cls.relationships[relKey(stu.id,p.id)] !== 'yellow');
-  const pool = greens.length ? greens : (nonYellow.length ? nonYellow : partners);
-  const minHistory = Math.min(...pool.map(p => pairHistoryCount(cls, stu.id, p.id)));
-  const freshPool = pool.filter(p => pairHistoryCount(cls, stu.id, p.id) === minHistory);
-  const partner = freshPool[Math.floor(Math.random()*freshPool.length)];
-  if(!seatPairInFreeSlot(cls, stu, partner)){ alert("No empty adjacent seats available to place this pair."); return; }
-  saveDB(); render();
 }
 
 // ---------- rendering ----------
@@ -1118,6 +1125,7 @@ function renderStudents(cls){
       cls.students = cls.students.filter(x=>x.id!==s.id);
       for(const k in cls.relationships) if(k.includes(s.id)) delete cls.relationships[k];
       if(cls.assignments) for(const k in cls.assignments) if(cls.assignments[k]===s.id) delete cls.assignments[k];
+      for(const t of cls.tables) if(t.lockedStudentId === s.id) t.lockedStudentId = null;
       saveDB(); render();
     };
     li.appendChild(del);
@@ -1135,6 +1143,10 @@ function renderStudents(cls){
     const [a,b] = key.split('|');
     if(!byId[a] || !byId[b]) continue;
     const color = cls.relationships[key];
+    // Green is the implicit default (no rule needed) — only surface the actual exceptions
+    // here. Green entries still exist under the hood from Pairing Screen ticks and still
+    // count toward generation, they just don't clutter this "problems" list.
+    if(color === 'green') continue;
     const li = document.createElement('li');
     li.innerHTML = `<span class="dot ${color}"></span><span class="names">${escapeHtml(byId[a])} &amp; ${escapeHtml(byId[b])}</span>`;
     const del = document.createElement('button');
@@ -1151,27 +1163,6 @@ function renderStudents(cls){
   document.getElementById('historyHint').textContent = pairedCount
     ? `🔁 Remembering ${pairedCount} past pairing${pairedCount===1?'':'s'} — Generate steers away from repeats.`
     : `🔁 No pairing history yet — recorded each time you open Present view.`;
-}
-
-function renderPairAssist(cls){
-  const panel = document.getElementById('pairAssistPanel');
-  if(cls.mode !== 'pair'){ panel.style.display = 'none'; return; }
-  panel.style.display = '';
-  const list = document.getElementById('pairAssistList');
-  list.innerHTML = '';
-  for(const s of cls.students){
-    const seated = isSeated(cls, s.id);
-    const row = document.createElement('div');
-    row.className = 'partner-row';
-    const nCount = cls.students.filter(o=>o.id!==s.id && !isSeated(cls,o.id) && cls.relationships[relKey(s.id,o.id)]!=='red').length;
-    row.innerHTML = `<span class="name">${escapeHtml(s.name)}</span><span class="avail">${seated?'seated':nCount+' possible'}</span>`;
-    const btn = document.createElement('button');
-    btn.className = 'small'; btn.textContent = '🎲';
-    btn.disabled = seated || nCount===0;
-    btn.onclick = () => autoPairStudent(cls, s);
-    row.appendChild(btn);
-    list.appendChild(row);
-  }
 }
 
 function renderCanvas(cls){
@@ -1231,11 +1222,13 @@ function renderCanvas(cls){
     for(const slot of seatLocalSlots(t)){
       const studentId = getAssignment(cls, slot.id);
       const student = studentId ? cls.students.find(s=>s.id===studentId) : null;
-      el('circle', {cx:slot.x, cy:slot.y, r:slot.r, class:'seat'+(student?' filled':'')}, g);
+      const locked = isSoloDesk(t) && t.lockedStudentId;
+      el('circle', {cx:slot.x, cy:slot.y, r:slot.r, class:'seat'+(student?' filled':''), style: locked ? 'stroke:#d97706;stroke-width:2.5;' : ''}, g);
       if(student){
         // counter-rotate so names stay upright regardless of table rotation
         const tg = el('g', {transform:`translate(${slot.x},${slot.y}) rotate(${-t.rot})`}, g);
         renderSeatLabel(tg, fitSeatLabel(student.name, slot.r, firstNameCounts), FILLED_SEAT_COLOR);
+        if(locked) el('text', {x:0, y:-slot.r-4, 'text-anchor':'middle', 'font-size':11, fill:'#d97706', 'pointer-events':'none'}, tg).textContent = '🔒';
       }
     }
 
@@ -1336,6 +1329,17 @@ function updateSelectedTableBar(cls){
   const colorI = document.getElementById('tableColorInput');
   const theme = cls.theme || DEFAULT_THEME;
   if(document.activeElement !== colorI) colorI.value = t.color || theme.tableColor;
+
+  const soloBar = document.getElementById('soloLockBar');
+  const soloSelect = document.getElementById('soloStudentSelect');
+  soloBar.style.display = isSoloDesk(t) ? '' : 'none';
+  if(isSoloDesk(t) && document.activeElement !== soloSelect){
+    const opts = ['<option value="">— none —</option>'].concat(
+      cls.students.map(s => `<option value="${s.id}">${escapeHtml(s.name)}${isSeated(cls,s.id) && s.id!==t.lockedStudentId ? ' (seated elsewhere)' : ''}</option>`)
+    );
+    soloSelect.innerHTML = opts.join('');
+    soloSelect.value = t.lockedStudentId || '';
+  }
 }
 
 function syncRoomSizeInputs(cls){
@@ -1363,7 +1367,6 @@ function render(){
   document.getElementById('emptyState').style.display = cls ? 'none' : '';
   if(!cls) return;
   renderStudents(cls);
-  renderPairAssist(cls);
   syncRoomSizeInputs(cls);
   currentViewBox = computeFitViewBox(cls);
   renderCanvas(cls);
@@ -1598,6 +1601,7 @@ const PRESET_FALLBACK = {
   rectGroup: { seatEdges:[0,1], seatsPerEdge:2, w:160, h:80 },
   rectPair:  { seatEdges:[1],   seatsPerEdge:2, w:120, h:61 },
   hex:       { seatEdges:null,  seatsPerEdge:null, w:180, h:90 },
+  solo:      { seatEdges:[1],   seatsPerEdge:1, w:70,  h:70 },
 };
 function addTable(shape, preset){
   const cls = getClass();
@@ -1614,6 +1618,7 @@ function addTable(shape, preset){
 document.getElementById('addRectGroupBtn').onclick = () => addTable('rect', 'rectGroup');
 document.getElementById('addRectPairBtn').onclick = () => addTable('rect', 'rectPair');
 document.getElementById('addHexBtn').onclick = () => addTable('hex', 'hex');
+document.getElementById('addSoloBtn').onclick = () => addTable('rect', 'solo');
 document.getElementById('addDoorBtn').onclick = () => {
   const cls = getClass();
   if(!cls.doors) cls.doors = [];
@@ -1710,6 +1715,13 @@ document.getElementById('deleteTableBtn').onclick = () => {
   if(cls.assignments) for(const k in cls.assignments) if(k.startsWith(selectedTableId+'-')) delete cls.assignments[k];
   selectedTableId = null; saveDB(); render();
 };
+document.getElementById('soloStudentSelect').addEventListener('change', () => {
+  const cls = getClass();
+  const t = cls.tables.find(tt=>tt.id===selectedTableId);
+  if(!t || !isSoloDesk(t)) return;
+  setSoloDeskStudent(cls, t, document.getElementById('soloStudentSelect').value);
+  saveDB(); render();
+});
 
 // ---------- present / print view ----------
 let presentView = 'student';
