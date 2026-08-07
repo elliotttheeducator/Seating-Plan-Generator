@@ -112,14 +112,14 @@
 </style>
 </head>
 <body>
-<div class="lock-overlay" id="lockOverlay">
+<div class="lock-overlay hidden" id="lockOverlay">
   <div class="lock-card">
-    <h1>Seating Plan Generator</h1>
-    <p class="hint">Enter the teacher PIN to edit rosters, proximity rules, and seating.</p>
+    <h1>Edit Mode</h1>
+    <p class="hint">Enter the teacher PIN to edit the room, roster, and rules.</p>
     <input type="password" id="pinInput" inputmode="numeric" maxlength="4" placeholder="••••" autocomplete="off">
     <div id="pinError" class="pin-error" style="display:none;">Incorrect PIN</div>
     <button id="unlockBtn" class="primary">Unlock Teacher Mode</button>
-    <button id="viewOnlyBtn">View Seating Chart Only</button>
+    <button id="pinCancelBtn">Cancel</button>
   </div>
 </div>
 <header>
@@ -229,8 +229,14 @@
     </div>
     <span class="hint" id="presentHint"></span>
     <span style="margin-left:auto;"></span>
+    <div class="mode-toggle" style="width:220px;" id="presentModeToggle">
+      <button id="presentModeGroupBtn">Group Tables</button>
+      <button id="presentModePairBtn">Pair Up</button>
+    </div>
+    <button id="presentGenerateBtn" class="primary">🎲 Generate New Plan</button>
     <button id="presentPrintBtn">🖨️ Print</button>
     <button id="presentPngBtn">🖼️ Export PNG</button>
+    <button id="presentEditModeBtn">🔓 Edit Mode</button>
     <button id="presentCloseBtn">✕ Close</button>
   </div>
   <div class="present-canvas-wrap">
@@ -586,15 +592,29 @@ function seatWorldPos(t, slot){
   const r = rotatePoint(slot.x, slot.y, rad);
   return { x:r.x+t.x, y:r.y+t.y };
 }
-function allSeatsWithWorld(cls){
+function allSeatsWithWorld(cls, tables){
   const seats = [];
-  for(const t of cls.tables){
+  for(const t of (tables || cls.tables)){
     for(const slot of seatLocalSlots(t)){
       const p = seatWorldPos(t, slot);
       seats.push({ id: slot.id, tableId: t.id, x:p.x, y:p.y });
     }
   }
   return seats;
+}
+// "+ Rect Pair Desk" tables are tagged preset:'rectPair'; everything else (group rect tables,
+// hex tables) counts as a group/lab-bench table. Rooms that mix both (e.g. a lab with desks
+// around the edges and benches in the middle) can then be seated using only one type at a
+// time. Rooms with only one table type are unaffected (the filter just returns everything).
+// Capacity is the primary signal (not just the preset tag) since plenty of existing tables —
+// including hand-drawn or older/imported ones — are clearly 2-seat desks without ever having
+// had a preset recorded on them.
+function isPairDeskTable(t){ return t.preset === 'rectPair' || seatLocalSlots(t).length <= 2; }
+function tablesForMode(cls, mode){
+  const pairT = cls.tables.filter(isPairDeskTable);
+  const groupT = cls.tables.filter(t => !isPairDeskTable(t));
+  if(mode === 'pair') return pairT.length ? pairT : cls.tables;
+  return groupT.length ? groupT : cls.tables;
 }
 function buildAdjacency(cls, seats){
   const adj = {};
@@ -661,8 +681,58 @@ function setAssignment(cls, seatId, studentId){
 }
 
 // ---------- generation ----------
+// Picks which group tables to actually use for n students, preferring the fewest tables (so
+// extra tables stay entirely spare) while making sure no used table ends up with just 1
+// student — e.g. 10 students across four 4-seat tables seats as 4+4+2 (three tables, one
+// spare) rather than 4+4+1+1 (a table each for two lonely students).
+function computeGroupTablePlan(n, tables){
+  const withCap = tables.map(t => ({ t, cap: seatLocalSlots(t).length })).sort((a,b)=>b.cap-a.cap);
+  for(let k=1;k<=withCap.length;k++){
+    if(n < 2*k) break;
+    const chosen = withCap.slice(0,k);
+    const totalCap = chosen.reduce((s,x)=>s+x.cap,0);
+    if(totalCap >= n) return chosen.map(x=>x.t);
+  }
+  return tables;
+}
+// Best-effort cleanup: if the greedy per-student placement below still leaves a table with
+// exactly 1 occupant (possible when red/yellow rules force an odd split), move that student
+// into another used table that has room, so no one ends up sitting alone.
+function fixSingletonGroupTables(assign, usedTables){
+  const occupantsOf = (t) => seatLocalSlots(t).map(s=>s.id).filter(id => assign[id]);
+  for(const t of usedTables){
+    const occupied = occupantsOf(t);
+    if(occupied.length !== 1) continue;
+    const loneSeatId = occupied[0];
+    const loneSlot = seatLocalSlots(t).find(s => s.id !== loneSeatId && !assign[s.id]);
+    // First choice: move the lone student to an empty seat at another table.
+    let moved = false;
+    for(const other of usedTables){
+      if(other.id === t.id) continue;
+      const freeSlot = seatLocalSlots(other).find(s => !assign[s.id]);
+      if(freeSlot){ assign[freeSlot.id] = assign[loneSeatId]; delete assign[loneSeatId]; moved = true; break; }
+    }
+    if(moved) continue;
+    // Every other table is completely full (this table's free seats are the only slack in the
+    // room) — pull one student out of a table with room to spare (3+, so it stays 2+ after)
+    // and seat them alongside the lone student instead.
+    if(loneSlot){
+      for(const other of usedTables){
+        if(other.id === t.id) continue;
+        const otherOccupied = occupantsOf(other);
+        if(otherOccupied.length < 3) continue;
+        const donorSeatId = otherOccupied[otherOccupied.length-1];
+        assign[loneSlot.id] = assign[donorSeatId];
+        delete assign[donorSeatId];
+        break;
+      }
+    }
+  }
+}
 function generateGroupSeating(cls){
-  const seats = allSeatsWithWorld(cls);
+  const targetTables = tablesForMode(cls, 'group');
+  const usedTables = computeGroupTablePlan(cls.students.length, targetTables);
+  const seats = allSeatsWithWorld(cls, usedTables);
   const adj = buildAdjacency(cls, seats);
   const seatIds = seats.map(s=>s.id);
   if(cls.students.length > seatIds.length){
@@ -698,12 +768,13 @@ function generateGroupSeating(cls){
     }
     if(score < bestScore){ bestScore = score; bestAssign = assign; if(score===0) break; }
   }
+  fixSingletonGroupTables(bestAssign, usedTables);
   cls.assignments = bestAssign;
   if(bestScore >= 1000) alert("Could not satisfy all red (never-sit-close) rules with the current layout — placed the best possible arrangement, please review the highlighted seating.");
 }
 
 function generatePairSeating(cls){
-  const seats = allSeatsWithWorld(cls);
+  const seats = allSeatsWithWorld(cls, tablesForMode(cls, 'pair'));
   const adj = buildAdjacency(cls, seats);
   const seatIds = seats.map(s=>s.id);
   if(cls.students.length > seatIds.length){
@@ -786,6 +857,126 @@ function generatePairSeating(cls){
   if(!bestPlacement){ alert("Could not find a valid pair arrangement — try adding more tables or loosening rules."); return; }
   cls.assignments = bestPlacement;
   if(bestScore2 >= 1000 || bestPScore >= 1000) alert("Could not satisfy all red (never-sit-close) rules with the current layout — placed the best possible arrangement, please review the highlighted seating.");
+}
+
+// ---------- Lab Mode: relocate the *existing* seating between pair desks and group tables ----------
+// Unlike Generate (which reshuffles who sits with whom), flipping the mode toggle keeps
+// whoever is currently seated together as a unit and just moves that unit to the nearest
+// table of the new type — so switching modes doesn't quietly re-pair the whole class, and
+// students don't have to walk far across the room when the layout flips.
+// Groups students currently sharing a table into units with a centroid position, plus
+// whoever isn't currently seated at all.
+function currentSeatingUnits(cls){
+  const byTable = {};
+  for(const seat of allSeatsWithWorld(cls)){
+    const stuId = cls.assignments && cls.assignments[seat.id];
+    if(!stuId) continue;
+    (byTable[seat.tableId] = byTable[seat.tableId] || []).push({ stuId, x:seat.x, y:seat.y });
+  }
+  const units = [];
+  for(const tableId in byTable){
+    const members = byTable[tableId];
+    units.push({
+      studentIds: members.map(m=>m.stuId),
+      x: members.reduce((s,m)=>s+m.x,0) / members.length,
+      y: members.reduce((s,m)=>s+m.y,0) / members.length
+    });
+  }
+  const seatedIds = new Set(units.flatMap(u=>u.studentIds));
+  const unseated = cls.students.filter(s => !seatedIds.has(s.id));
+  return { units, unseated };
+}
+// Each pair-desk table is claimed by exactly one unit (nearest desk first, greedily).
+function placeUnitsOnPairTables(cls, units, targetTables){
+  for(const t of cls.tables) for(const slot of seatLocalSlots(t)) delete cls.assignments[slot.id];
+  const claimed = new Set();
+  for(const u of units){
+    let best = null, bestD = Infinity;
+    for(const t of targetTables){
+      if(claimed.has(t.id)) continue;
+      const d = Math.hypot(t.x-u.x, t.y-u.y);
+      if(d < bestD){ bestD = d; best = t; }
+    }
+    if(!best) continue;
+    claimed.add(best.id);
+    const slots = seatLocalSlots(best);
+    u.studentIds.forEach((stuId,i) => { if(slots[i]) cls.assignments[slots[i].id] = stuId; });
+  }
+}
+// Pairs are kept together and placed at whichever group table (nearest to the pair's old
+// desk) still has room; solo leftovers must join an already-occupied table rather than
+// starting a table of their own, so nobody ends up seated alone.
+function placeUnitsOnGroupTables(cls, units, targetTables){
+  for(const t of cls.tables) for(const slot of seatLocalSlots(t)) delete cls.assignments[slot.id];
+  const pool = targetTables.map(t => ({ t, cap: seatLocalSlots(t).length, members: [] }));
+  const pairUnits = units.filter(u => u.studentIds.length >= 2);
+  const soloUnits = units.filter(u => u.studentIds.length === 1);
+  const leftover = [];
+  for(const u of pairUnits){
+    let best = null, bestD = Infinity;
+    for(const p of pool){
+      if(p.cap - p.members.length < u.studentIds.length) continue;
+      const d = Math.hypot(p.t.x-u.x, p.t.y-u.y);
+      if(d < bestD){ bestD = d; best = p; }
+    }
+    if(best) best.members.push(...u.studentIds);
+    else leftover.push(...u.studentIds.map(id => ({ studentIds:[id], x:u.x, y:u.y })));
+  }
+  const strandedSolos = [];
+  for(const u of soloUnits.concat(leftover)){
+    let best = null, bestD = Infinity;
+    for(const p of pool){
+      if(p.members.length === 0) continue; // never start a table with just 1 person
+      if(p.cap - p.members.length < 1) continue;
+      const d = Math.hypot(p.t.x-u.x, p.t.y-u.y);
+      if(d < bestD){ bestD = d; best = p; }
+    }
+    // No occupied table has a free seat (e.g. pairs already filled every table to capacity) —
+    // rather than start a fresh table with just this one student, fix it up below instead.
+    if(!best){ strandedSolos.push(u); continue; }
+    best.members.push(...u.studentIds);
+  }
+  // Every occupied table was full when a solo needed a seat — free one up by pulling a
+  // student from wherever has slack (3+ members, so it still has 2+ left afterward) into the
+  // stranded solo's own table, rather than leaving that solo seated alone.
+  for(const u of strandedSolos){
+    const donor = pool.find(p => p.members.length >= 3);
+    const host = donor && pool.find(p => p.members.length === 0 && p.cap >= 2);
+    if(donor && host) host.members.push(donor.members.pop(), ...u.studentIds);
+    else if(donor && donor.cap - donor.members.length >= 1) donor.members.push(...u.studentIds);
+    else {
+      const anyRoom = pool.find(p => p.cap - p.members.length >= 1);
+      if(anyRoom) anyRoom.members.push(...u.studentIds);
+    }
+  }
+  for(const p of pool){
+    const slots = seatLocalSlots(p.t);
+    p.members.forEach((stuId,i) => { if(slots[i]) cls.assignments[slots[i].id] = stuId; });
+  }
+}
+// Switches cls.mode, relocating whoever's currently seated to the nearest table of the new
+// type instead of re-generating (which would re-shuffle who's grouped with whom). If nothing
+// is seated yet, this is just a plain mode switch — there's nothing to relocate.
+function setClassMode(cls, newMode){
+  if(cls.mode === newMode) return;
+  const { units, unseated } = currentSeatingUnits(cls);
+  const targetTables = tablesForMode(cls, newMode);
+  if(!cls.assignments) cls.assignments = {};
+  // Only relocate if someone is actually already seated — if nobody is, this is just a plain
+  // mode switch (not a cue to start seating unseated students one at a time).
+  if(units.length && targetTables.length){
+    const bounds = computeRoomBounds(cls);
+    const cx = (bounds.minX+bounds.maxX)/2, cy = (bounds.minY+bounds.maxY)/2;
+    const unseatedUnits = unseated.map(s => ({ studentIds:[s.id], x:cx, y:cy }));
+    if(newMode === 'pair'){
+      const subUnits = [];
+      for(const u of units) for(let i=0;i<u.studentIds.length;i+=2) subUnits.push({ studentIds:u.studentIds.slice(i,i+2), x:u.x, y:u.y });
+      placeUnitsOnPairTables(cls, subUnits.concat(unseatedUnits), targetTables);
+    } else {
+      placeUnitsOnGroupTables(cls, units.concat(unseatedUnits), targetTables);
+    }
+  }
+  cls.mode = newMode;
 }
 
 // Finds an empty pair of adjacent seats and seats (a,b) there. Returns false if none free.
@@ -1373,8 +1564,8 @@ document.getElementById('addRelBtn').onclick = () => {
   saveDB(); render();
 };
 
-document.getElementById('modeGroupBtn').onclick = () => { getClass().mode = 'group'; saveDB(); render(); };
-document.getElementById('modePairBtn').onclick = () => { getClass().mode = 'pair'; saveDB(); render(); };
+document.getElementById('modeGroupBtn').onclick = () => { setClassMode(getClass(), 'group'); saveDB(); render(); };
+document.getElementById('modePairBtn').onclick = () => { setClassMode(getClass(), 'pair'); saveDB(); render(); };
 
 document.getElementById('generateBtn').onclick = () => {
   const cls = getClass();
@@ -1533,10 +1724,10 @@ function openPresent(){
   renderPresent();
 }
 function closePresent(){
+  if(!isUnlocked()) return; // Present is the homepage when logged out — nothing to close back to
   document.body.classList.remove('presenting');
   document.getElementById('presentOverlay').classList.remove('open');
-  if(!isUnlocked()) showLock();
-  else render();
+  render();
 }
 function renderPresent(){
   const cls = getClass();
@@ -1547,6 +1738,10 @@ function renderPresent(){
   document.getElementById('presentHint').textContent = presentView==='teacher'
     ? 'Teacher view: whiteboard at the bottom, as seen facing the class.'
     : 'Student view: whiteboard at the top, as seen facing the front.';
+  document.getElementById('presentModeGroupBtn').classList.toggle('active', cls.mode==='group');
+  document.getElementById('presentModePairBtn').classList.toggle('active', cls.mode==='pair');
+  document.getElementById('presentCloseBtn').style.display = isUnlocked() ? '' : 'none';
+  document.getElementById('presentEditModeBtn').textContent = isUnlocked() ? '🔓 Edit Mode' : '🔒 Edit Mode';
 
   presentSvg.innerHTML = '';
   const theme = cls.theme || DEFAULT_THEME;
@@ -1714,6 +1909,22 @@ document.getElementById('presentPrintBtn').onclick = () => window.print();
 document.getElementById('viewStudentBtn').onclick = () => { presentView='student'; renderPresent(); };
 document.getElementById('viewTeacherBtn').onclick = () => { presentView='teacher'; renderPresent(); };
 
+// Day-to-day actions available right from the homepage, no PIN needed: regenerate using the
+// rules already set, and flip between pair desks / group tables (Lab Mode).
+document.getElementById('presentGenerateBtn').onclick = () => {
+  const cls = getClass();
+  if(!cls.students.length){ alert('Add some students first (Edit Mode).'); return; }
+  if(!cls.tables.length){ alert('Add at least one table first (Edit Mode).'); return; }
+  if(cls.mode === 'pair') generatePairSeating(cls); else generateGroupSeating(cls);
+  saveDB(); render(); renderPresent();
+};
+document.getElementById('presentModeGroupBtn').onclick = () => { setClassMode(getClass(), 'group'); saveDB(); render(); renderPresent(); };
+document.getElementById('presentModePairBtn').onclick = () => { setClassMode(getClass(), 'pair'); saveDB(); render(); renderPresent(); };
+document.getElementById('presentEditModeBtn').onclick = () => {
+  if(isUnlocked()) closePresent();
+  else showLock();
+};
+
 document.getElementById('exportBtn').onclick = () => {
   const cls = getClass();
   const blob = new Blob([JSON.stringify(db, null, 2)], {type:'application/json'});
@@ -1814,6 +2025,7 @@ function tryUnlock(){
     hideLock();
     input.value = '';
     document.getElementById('pinError').style.display = 'none';
+    if(getClass()) closePresent(); else render();
   } else {
     document.getElementById('pinError').style.display = '';
     input.value = '';
@@ -1822,15 +2034,26 @@ function tryUnlock(){
 }
 document.getElementById('unlockBtn').onclick = tryUnlock;
 document.getElementById('pinInput').addEventListener('keydown', (e) => { if(e.key === 'Enter') tryUnlock(); });
-document.getElementById('viewOnlyBtn').onclick = () => { hideLock(); openPresent(); };
+document.getElementById('pinCancelBtn').onclick = () => {
+  hideLock();
+  document.getElementById('pinInput').value = '';
+  document.getElementById('pinError').style.display = 'none';
+};
 document.getElementById('lockBtn').onclick = () => {
   sessionStorage.removeItem('spg_unlocked');
   closePairs();
-  closePresent();
+  closeSettings();
+  if(getClass()) openPresent();
 };
-if(isUnlocked()) hideLock(); else showLock();
 
+// Present is the homepage: land there whenever there's a class to show. Edit Mode (room
+// building, roster, proximity rules) is reached from Present's own "Edit Mode" button and is
+// the only thing gated behind the teacher PIN. The empty-class bootstrap case still needs the
+// PIN, since there's no seating plan yet to present.
+hideLock();
 render();
+if(getClass()) openPresent();
+else if(!isUnlocked()) showLock();
 })();
 </script>
 </body>
