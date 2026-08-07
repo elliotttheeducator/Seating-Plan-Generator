@@ -304,6 +304,16 @@
         <div class="hint">Pick a student and tick who they'd be a good match with — ticks work for already-seated students too, so updates here take effect on the next 🎲 Generate rather than the current seating.</div>
         <button id="openPairsScreenBtn" class="primary" style="width:100%;margin-top:10px;">👥 Open Pairing Screen</button>
       </div>
+      <div class="panel" style="margin-top:12px;">
+        <h2>Friend Groups</h2>
+        <div class="hint">For a bigger friendship group — sitting next to one of them is still totally fine, this just stops the whole group clumping into one corner of the room. Different from Proximity Rules (which govern who sits directly next to whom).</div>
+        <div class="row wrap" style="margin-top:8px;">
+          <input type="text" id="groupNameInput" placeholder="Group name" style="flex:1;min-width:140px;">
+        </div>
+        <ul class="studentlist" id="groupMemberChecklist" style="max-height:180px;overflow-y:auto;margin-top:6px;border:1px solid var(--border);border-radius:6px;padding:4px;"></ul>
+        <button id="addGroupBtn" class="primary" style="width:100%;margin-top:8px;">+ Add Group</button>
+        <ul class="rel-list" id="groupList" style="margin-top:10px;"></ul>
+      </div>
     </div>
   </div>
 </div>
@@ -318,6 +328,10 @@ const STORAGE_KEY = "seatingPlanGenerator.v3";
 // rescaling), but the room-size and table-size inputs display/accept metres — the
 // standard a teacher would actually measure a room or desk in.
 const ADJ_THRESHOLD = 95; // cm: seats within this distance (or on same table) count as "close"
+// cm: radius used only for friend-group dispersion — much wider than ADJ_THRESHOLD since the
+// point isn't "who's touching," it's "is a whole corner of the room becoming one friend group."
+const CLUSTER_RADIUS = 220;
+const CLUSTER_WEIGHT = 14;
 const DOOR_LEN = 85;
 const BASE_ROOM_W = 1000, BASE_ROOM_H = 700; // default 10m x 7m
 const DEFAULT_THEME = { floorMode: 'texture', floorColor: '#c7cdd6', tableMode: 'texture', tableColor: '#f6f4ef' };
@@ -437,7 +451,7 @@ function defaultClass(name){
   return {
     id: uid(), name: name || "Class 1",
     students: [], relationships: {}, mode: "group",
-    walls: [], tables: [], doors: [],
+    walls: [], tables: [], doors: [], groups: [],
     theme: { ...DEFAULT_THEME }, tableDefaults: {}
   };
 }
@@ -456,6 +470,32 @@ function saveDB(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); }
 
 function getClass(){ return db.classes.find(c => c.id === currentClassId) || db.classes[0]; }
 function relKey(a,b){ return [a,b].sort().join('|'); }
+
+// ---------- friend groups (spread out instead of clumping in one area) ----------
+// A "group" is a set of students who are individually fine to pair up with each other (that's
+// normal — sitting next to one friend is expected and unpenalized) but who shouldn't all end
+// up seated in the same corner of the room. Distinct from red/yellow (which govern immediate
+// adjacency) and green/history (which govern who partners with whom).
+function groupsContaining(cls, studentId){
+  return (cls.groups || []).filter(g => g.studentIds.includes(studentId));
+}
+// How many already-placed students within CLUSTER_RADIUS of (x,y) share a friend group with
+// this student — used as an escalating penalty so a 2nd/3rd nearby group-mate costs more than
+// the 1st (sitting with one friend is fine; a pile of four in one corner isn't).
+function clusterPenalty(cls, studentId, x, y, assign, seatsById){
+  const groups = groupsContaining(cls, studentId);
+  if(!groups.length) return 0;
+  let count = 0;
+  for(const seatId in assign){
+    const otherId = assign[seatId];
+    if(!otherId || otherId === studentId) continue;
+    const otherSeat = seatsById[seatId];
+    if(!otherSeat) continue;
+    if(Math.hypot(otherSeat.x-x, otherSeat.y-y) > CLUSTER_RADIUS) continue;
+    if(groups.some(g => g.studentIds.includes(otherId))) count++;
+  }
+  return count;
+}
 
 // ---------- pairing history (avoid repeat tablemates week to week) ----------
 // cls.pairHistory maps relKey(a,b) -> number of times a & b have shared a table, recorded
@@ -773,6 +813,7 @@ function generateGroupSeating(cls){
   const targetTables = tablesForMode(cls, 'group');
   const usedTables = computeGroupTablePlan(students.length, targetTables);
   const seats = allSeatsWithWorld(cls, usedTables);
+  const seatsById = Object.fromEntries(seats.map(s=>[s.id,s]));
   const adj = buildAdjacency(cls, seats);
   const seatIds = seats.map(s=>s.id);
   if(students.length > seatIds.length){
@@ -799,6 +840,8 @@ function generateGroupSeating(cls){
           else if(rel === 'yellow') penalty += 5;
           penalty += pairHistoryCount(cls, stu.id, nbStu) * 8;
         }
+        const seat = seatsById[seatId];
+        penalty += clusterPenalty(cls, stu.id, seat.x, seat.y, assign, seatsById) * CLUSTER_WEIGHT;
         if(penalty < bestPenalty){ bestPenalty = penalty; ties = [seatId]; }
         else if(penalty === bestPenalty){ ties.push(seatId); }
       }
@@ -817,6 +860,7 @@ function generateGroupSeating(cls){
 function generatePairSeating(cls){
   const students = generatableStudents(cls);
   const seats = allSeatsWithWorld(cls, tablesForMode(cls, 'pair'));
+  const seatsById = Object.fromEntries(seats.map(s=>[s.id,s]));
   const adj = buildAdjacency(cls, seats);
   const seatIds = seats.map(s=>s.id);
   if(students.length > seatIds.length){
@@ -877,6 +921,8 @@ function generatePairSeating(cls){
             if(rel==='red') pen += 1000;
             else if(rel==='yellow') pen += 5;
           }
+          const seat = seatsById[seatId];
+          pen += clusterPenalty(cls, stu.id, seat.x, seat.y, assign, seatsById) * CLUSTER_WEIGHT;
         }
         if(pen < bestPen){ bestPen = pen; ties = [i]; }
         else if(pen === bestPen) ties.push(i);
@@ -1126,6 +1172,7 @@ function renderStudents(cls){
       for(const k in cls.relationships) if(k.includes(s.id)) delete cls.relationships[k];
       if(cls.assignments) for(const k in cls.assignments) if(cls.assignments[k]===s.id) delete cls.assignments[k];
       for(const t of cls.tables) if(t.lockedStudentId === s.id) t.lockedStudentId = null;
+      if(cls.groups) for(const g of cls.groups) g.studentIds = g.studentIds.filter(id=>id!==s.id);
       saveDB(); render();
     };
     li.appendChild(del);
@@ -1163,6 +1210,41 @@ function renderStudents(cls){
   document.getElementById('historyHint').textContent = pairedCount
     ? `🔁 Remembering ${pairedCount} past pairing${pairedCount===1?'':'s'} — Generate steers away from repeats.`
     : `🔁 No pairing history yet — recorded each time you open Present view.`;
+
+  renderGroups(cls);
+}
+
+// Friend-group checklist (for the "new group" form) + the list of already-created groups.
+function renderGroups(cls){
+  const checklist = document.getElementById('groupMemberChecklist');
+  checklist.innerHTML = '';
+  for(const s of cls.students){
+    const li = document.createElement('li');
+    const label = document.createElement('label');
+    label.style.display = 'flex'; label.style.alignItems = 'center'; label.style.gap = '6px'; label.style.cursor = 'pointer';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.value = s.id; cb.className = 'group-member-checkbox';
+    label.appendChild(cb);
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = s.name;
+    label.appendChild(nameSpan);
+    li.appendChild(label);
+    checklist.appendChild(li);
+  }
+
+  const groupList = document.getElementById('groupList');
+  groupList.innerHTML = '';
+  const byId = Object.fromEntries(cls.students.map(s=>[s.id,s.name]));
+  for(const g of (cls.groups || [])){
+    const names = g.studentIds.map(id => byId[id]).filter(Boolean);
+    const li = document.createElement('li');
+    li.innerHTML = `<span class="names"><strong>${escapeHtml(g.name)}</strong> — ${escapeHtml(names.join(', ') || 'no students')}</span>`;
+    const del = document.createElement('button');
+    del.className = 'small'; del.textContent = '✕';
+    del.onclick = () => { cls.groups = cls.groups.filter(x=>x.id!==g.id); saveDB(); render(); };
+    li.appendChild(del);
+    groupList.appendChild(li);
+  }
 }
 
 function renderCanvas(cls){
@@ -1564,6 +1646,18 @@ document.getElementById('addRelBtn').onclick = () => {
   const color = document.getElementById('relColor').value;
   if(!a || !b || a===b){ alert('Choose two different students.'); return; }
   cls.relationships[relKey(a,b)] = color;
+  saveDB(); render();
+};
+document.getElementById('addGroupBtn').onclick = () => {
+  const cls = getClass();
+  const nameInput = document.getElementById('groupNameInput');
+  const name = nameInput.value.trim();
+  const studentIds = Array.from(document.querySelectorAll('.group-member-checkbox:checked')).map(cb=>cb.value);
+  if(!name){ alert('Give the group a name.'); return; }
+  if(studentIds.length < 2){ alert('Tick at least 2 students for the group.'); return; }
+  if(!cls.groups) cls.groups = [];
+  cls.groups.push({ id: uid(), name, studentIds });
+  nameInput.value = '';
   saveDB(); render();
 };
 
