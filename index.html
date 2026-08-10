@@ -109,6 +109,19 @@
     body.presenting .present-overlay{position:static !important;}
     body.presenting .present-canvas-wrap{overflow:visible;}
   }
+  .print-split{display:none;}
+  @media print{
+    @page{size:landscape;margin:8mm;}
+    body.printing-split > *:not(#printSplitLayout){display:none !important;}
+    body.printing-split #printSplitLayout{
+      display:flex !important;flex-direction:column;position:fixed;inset:0;width:100%;height:100%;
+    }
+    .print-split-title{font-size:36px;font-weight:800;text-align:center;padding:2px 0;flex:0 0 auto;}
+    .print-split-diagrams{flex:1;display:flex;gap:14px;min-height:0;}
+    .print-split-col{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;}
+    .print-split-label{text-align:center;font-weight:700;font-size:13px;color:#555;flex:0 0 auto;margin-bottom:2px;}
+    .print-split-col svg{flex:1;width:100%;height:100%;min-height:0;display:block;}
+  }
 </style>
 </head>
 <body>
@@ -223,6 +236,24 @@
   </div>
 </div>
 <footer>Data is saved automatically in this browser. Use Export/Import to move a plan between computers.</footer>
+
+<!-- Print-only layout: student view + teacher view side by side, landscape, title top and
+     bottom. Hidden on screen; shown exclusively via @media print when body carries
+     .printing-split (see printSplitView()). -->
+<div class="print-split" id="printSplitLayout">
+  <div class="print-split-title" id="printTitleTop"></div>
+  <div class="print-split-diagrams">
+    <div class="print-split-col">
+      <div class="print-split-label">Student View</div>
+      <svg id="printSvgStudent" viewBox="0 0 1000 640" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+    <div class="print-split-col">
+      <div class="print-split-label">Teacher View</div>
+      <svg id="printSvgTeacher" viewBox="0 0 1000 640" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+  </div>
+  <div class="print-split-title" id="printTitleBottom"></div>
+</div>
 
 <div class="present-overlay" id="presentOverlay">
   <div class="present-bar">
@@ -1835,65 +1866,57 @@ function closePresent(){
   document.getElementById('presentOverlay').classList.remove('open');
   render();
 }
-function renderPresent(){
-  const cls = getClass();
+// Draws a full room diagram (walls, whiteboard, doors, tables, seats) into any SVG element,
+// tightly fit to the room's own bounds. Shared by the live Present view and the two
+// side-by-side student/teacher diagrams in the print layout — idPrefix keeps each target's
+// <pattern> ids unique so multiple copies can coexist in the same document at once.
+function renderRoomInto(targetSvg, cls, flip, idPrefix){
   const firstNameCounts = computeFirstNameCounts(cls);
-  document.getElementById('presentTitle').textContent = cls.name + ' — Seating Plan';
-  document.getElementById('viewStudentBtn').classList.toggle('active', presentView==='student');
-  document.getElementById('viewTeacherBtn').classList.toggle('active', presentView==='teacher');
-  document.getElementById('presentHint').textContent = presentView==='teacher'
-    ? 'Teacher view: whiteboard at the bottom, as seen facing the class.'
-    : 'Student view: whiteboard at the top, as seen facing the front.';
-  document.getElementById('presentModeGroupBtn').classList.toggle('active', cls.mode==='group');
-  document.getElementById('presentModePairBtn').classList.toggle('active', cls.mode==='pair');
-  document.getElementById('presentCloseBtn').style.display = isUnlocked() ? '' : 'none';
-  document.getElementById('presentEditModeBtn').textContent = isUnlocked() ? '🔓 Edit Mode' : '🔒 Edit Mode';
-
-  presentSvg.innerHTML = '';
+  targetSvg.innerHTML = '';
   const theme = cls.theme || DEFAULT_THEME;
-  setupFloorPattern(presentSvg, 'carpetPatternPresent', theme);
-  addImagePattern(presentSvg, 'woodPatternPresent', WOOD_TEXTURE_URI, 60);
+  const carpetId = 'carpetPattern_' + idPrefix, woodId = 'woodPattern_' + idPrefix;
+  setupFloorPattern(targetSvg, carpetId, theme);
+  addImagePattern(targetSvg, woodId, WOOD_TEXTURE_URI, 60);
   const pvb = computeFitViewBox(cls);
-  presentSvg.setAttribute('viewBox', `${pvb.x} ${pvb.y} ${pvb.w} ${pvb.h}`);
+  targetSvg.setAttribute('viewBox', `${pvb.x} ${pvb.y} ${pvb.w} ${pvb.h}`);
   const cx = pvb.x + pvb.w/2, cy = pvb.y + pvb.h/2;
-  const flip = presentView === 'teacher';
   const fx = (x) => flip ? 2*cx - x : x;
   const fy = (y) => flip ? 2*cy - y : y;
   const frot = (r) => flip ? r + 180 : r;
 
   const hasWalls = cls.walls && cls.walls.length > 0;
-  el('rect', {x:pvb.x,y:pvb.y,width:pvb.w,height:pvb.h,fill: hasWalls ? '#eef0f3' : 'url(#carpetPatternPresent)'}, presentSvg);
+  el('rect', {x:pvb.x,y:pvb.y,width:pvb.w,height:pvb.h,fill: hasWalls ? '#eef0f3' : `url(#${carpetId})`}, targetSvg);
 
   for(const w of cls.walls){
     const nx = flip ? 2*cx - (w.x+w.w) : w.x;
     const ny = flip ? 2*cy - (w.y+w.h) : w.y;
-    el('rect', {x:nx,y:ny,width:w.w,height:w.h,style:'fill:url(#carpetPatternPresent)'}, presentSvg);
+    el('rect', {x:nx,y:ny,width:w.w,height:w.h,style:`fill:url(#${carpetId})`}, targetSvg);
   }
 
   const headerStrip = computeHeaderStripRect(cls);
   if(headerStrip){
     const hx = flip ? 2*cx - (headerStrip.x+headerStrip.w) : headerStrip.x;
     const hy = flip ? 2*cy - (headerStrip.y+headerStrip.h) : headerStrip.y;
-    el('rect', {x:hx, y:hy, width:headerStrip.w, height:headerStrip.h, style:'fill:url(#carpetPatternPresent)'}, presentSvg);
+    el('rect', {x:hx, y:hy, width:headerStrip.w, height:headerStrip.h, style:`fill:url(#${carpetId})`}, targetSvg);
   }
 
   const wb = computeWhiteboardRect(cls);
   const wbH = wb.h * 1.15, wbFont = wb.fontSize * 1.15;
   const wbX = flip ? 2*cx - (wb.x+wb.w) : wb.x;
   const wbY = flip ? 2*cy - (wb.y+wbH) : wb.y;
-  drawWhiteboard(presentSvg, wbX, wbY, wb.w, wbH, wbFont);
+  drawWhiteboard(targetSvg, wbX, wbY, wb.w, wbH, wbFont);
 
   for(const d of (cls.doors||[])){
     const dx = fx(d.x), dy = fy(d.y), drot = frot(d.rot);
-    const g = el('g', {transform:`translate(${dx},${dy}) rotate(${drot})`}, presentSvg);
+    const g = el('g', {transform:`translate(${dx},${dy}) rotate(${drot})`}, targetSvg);
     drawDoorShape(g, drot);
   }
 
   for(const t of cls.tables){
     const tx = fx(t.x), ty = fy(t.y), trot = frot(t.rot);
-    const g = el('g', {transform:`translate(${tx},${ty}) rotate(${trot})`}, presentSvg);
+    const g = el('g', {transform:`translate(${tx},${ty}) rotate(${trot})`}, targetSvg);
     const verts = tableLocalVerts(t).map(p=>`${p.x},${p.y}`).join(' ');
-    el('polygon', {points:verts, class:'table-shape', style:`fill:${resolveTableFill(cls,t,'woodPatternPresent')}`}, g);
+    el('polygon', {points:verts, class:'table-shape', style:`fill:${resolveTableFill(cls,t,woodId)}`}, g);
     for(const slot of seatLocalSlots(t)){
       const studentId = getAssignment(cls, slot.id);
       const student = studentId ? cls.students.find(s=>s.id===studentId) : null;
@@ -1907,6 +1930,22 @@ function renderPresent(){
       }
     }
   }
+}
+
+function renderPresent(){
+  const cls = getClass();
+  document.getElementById('presentTitle').textContent = cls.name + ' — Seating Plan';
+  document.getElementById('viewStudentBtn').classList.toggle('active', presentView==='student');
+  document.getElementById('viewTeacherBtn').classList.toggle('active', presentView==='teacher');
+  document.getElementById('presentHint').textContent = presentView==='teacher'
+    ? 'Teacher view: whiteboard at the bottom, as seen facing the class.'
+    : 'Student view: whiteboard at the top, as seen facing the front.';
+  document.getElementById('presentModeGroupBtn').classList.toggle('active', cls.mode==='group');
+  document.getElementById('presentModePairBtn').classList.toggle('active', cls.mode==='pair');
+  document.getElementById('presentCloseBtn').style.display = isUnlocked() ? '' : 'none';
+  document.getElementById('presentEditModeBtn').textContent = isUnlocked() ? '🔓 Edit Mode' : '🔒 Edit Mode';
+
+  renderRoomInto(presentSvg, cls, presentView === 'teacher', 'present');
 }
 
 // ---------- dedicated pairs screen ----------
@@ -2011,7 +2050,22 @@ document.getElementById('settingsCloseBtn').onclick = closeSettings;
 
 document.getElementById('presentBtn').onclick = openPresent;
 document.getElementById('presentCloseBtn').onclick = closePresent;
-document.getElementById('presentPrintBtn').onclick = () => window.print();
+// Landscape print: student view + teacher view side by side, room area maximised, with a
+// large title (asked for once via prompt) repeated at the top and bottom of the page.
+function printSplitView(){
+  const cls = getClass();
+  if(!cls) return;
+  const title = prompt('Title', cls.name || '');
+  if(title === null) return;
+  document.getElementById('printTitleTop').textContent = title;
+  document.getElementById('printTitleBottom').textContent = title;
+  renderRoomInto(document.getElementById('printSvgStudent'), cls, false, 'printStudent');
+  renderRoomInto(document.getElementById('printSvgTeacher'), cls, true, 'printTeacher');
+  document.body.classList.add('printing-split');
+  window.print();
+}
+window.addEventListener('afterprint', () => document.body.classList.remove('printing-split'));
+document.getElementById('presentPrintBtn').onclick = printSplitView;
 document.getElementById('viewStudentBtn').onclick = () => { presentView='student'; renderPresent(); };
 document.getElementById('viewTeacherBtn').onclick = () => { presentView='teacher'; renderPresent(); };
 
