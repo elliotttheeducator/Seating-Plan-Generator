@@ -1488,7 +1488,9 @@ function fitSeatLabel(name, radius, firstNameCounts){
   if(longest > 9) size = radius * 0.58;
   else if(longest > 6) size = radius * 0.7;
   size = Math.max(size, 9);
-  const size2 = lines.length > 1 ? Math.max(size * 0.6, 8) : 0;
+  // Same size as the first name — a one-character initial has plenty of room even at full
+  // size, so there's no need to shrink it the way a second full word would have to be.
+  const size2 = lines.length > 1 ? size : 0;
   return { lines, size, size2 };
 }
 // Draws a 1- or 2-line seat label centered in the given upright group, with a rounded
