@@ -2180,8 +2180,21 @@ function printSplitView(){
   if(title === null) return;
   document.getElementById('printTitleTop').textContent = title;
   document.getElementById('printTitleBottom').textContent = title;
+
+  // renderRoomInto measures every seat label with getBBox() to size/shrink its chip — but
+  // #printSplitLayout is display:none until an actual print media context applies its own
+  // override, and getBBox() can return bogus (zero-ish) results for elements inside a
+  // display:none ancestor. That missized the chip against the real text, leaving part of a
+  // long name (e.g. the "H" of "Hannah") sitting directly on the dark carpet with no chip
+  // behind it. Force the layout visible-but-off-screen just long enough to render and measure
+  // correctly, then hand back to the stylesheet/print CSS.
+  const layout = document.getElementById('printSplitLayout');
+  const prevStyle = layout.getAttribute('style');
+  layout.style.cssText = (prevStyle || '') + ';display:flex !important;position:fixed;left:-99999px;top:0;';
   renderRoomInto(document.getElementById('printSvgStudent'), cls, false, 'printStudent', true);
   renderRoomInto(document.getElementById('printSvgTeacher'), cls, true, 'printTeacher', true);
+  if(prevStyle === null) layout.removeAttribute('style'); else layout.setAttribute('style', prevStyle);
+
   document.body.classList.add('printing-split');
   window.print();
 }
