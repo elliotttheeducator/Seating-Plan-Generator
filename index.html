@@ -833,14 +833,16 @@ function setAssignment(cls, seatId, studentId){
 }
 
 // ---------- generation ----------
-// Picks which group tables to actually use for n students, preferring the fewest tables (so
-// extra tables stay entirely spare) while making sure no used table ends up with just 1
-// student — e.g. 10 students across four 4-seat tables seats as 4+4+2 (three tables, one
-// spare) rather than 4+4+1+1 (a table each for two lonely students).
+// Picks which group tables to actually use for n students, preferring to spread across every
+// table available — a teacher who set up 5 tables wants the class spaced out across all 5, not
+// consolidated onto 2 while 3 sit empty. Only drops tables (starting with the smallest) when
+// using all of them genuinely isn't possible without leaving someone seated alone — e.g. 8
+// students can't be spread 2-per-table across 5 four-seat tables, so it falls back to 4 tables
+// of 2 rather than something like 4+2+1+1.
 function computeGroupTablePlan(n, tables){
   const withCap = tables.map(t => ({ t, cap: seatLocalSlots(t).length })).sort((a,b)=>b.cap-a.cap);
-  for(let k=1;k<=withCap.length;k++){
-    if(n < 2*k) break;
+  for(let k=withCap.length; k>=1; k--){
+    if(n < 2*k) continue; // not enough students to give all k of these tables >=2 people
     const chosen = withCap.slice(0,k);
     const totalCap = chosen.reduce((s,x)=>s+x.cap,0);
     if(totalCap >= n) return chosen.map(x=>x.t);
@@ -857,17 +859,18 @@ function fixSingletonGroupTables(assign, usedTables){
     if(occupied.length !== 1) continue;
     const loneSeatId = occupied[0];
     const loneSlot = seatLocalSlots(t).find(s => s.id !== loneSeatId && !assign[s.id]);
-    // First choice: move the lone student to an empty seat at another table.
     let moved = false;
+    // First choice: move the lone student to a free seat at another table that already has
+    // people — moving them to a completely empty table would just relocate the singleton,
+    // not fix it.
     for(const other of usedTables){
-      if(other.id === t.id) continue;
+      if(other.id === t.id || occupantsOf(other).length === 0) continue;
       const freeSlot = seatLocalSlots(other).find(s => !assign[s.id]);
       if(freeSlot){ assign[freeSlot.id] = assign[loneSeatId]; delete assign[loneSeatId]; moved = true; break; }
     }
     if(moved) continue;
-    // Every other table is completely full (this table's free seats are the only slack in the
-    // room) — pull one student out of a table with room to spare (3+, so it stays 2+ after)
-    // and seat them alongside the lone student instead.
+    // No already-occupied table has room — pull one student out of a table with slack (3+, so
+    // it stays 2+ after) and seat them alongside the lone student instead.
     if(loneSlot){
       for(const other of usedTables){
         if(other.id === t.id) continue;
@@ -876,8 +879,18 @@ function fixSingletonGroupTables(assign, usedTables){
         const donorSeatId = otherOccupied[otherOccupied.length-1];
         assign[loneSlot.id] = assign[donorSeatId];
         delete assign[donorSeatId];
+        moved = true;
         break;
       }
+    }
+    if(moved) continue;
+    // Last resort: nothing occupied has room or slack to give (e.g. every other table is
+    // exactly full) — moving to an empty table is still a relocation, not a fix, but it's the
+    // only seat left.
+    for(const other of usedTables){
+      if(other.id === t.id) continue;
+      const freeSlot = seatLocalSlots(other).find(s => !assign[s.id]);
+      if(freeSlot){ assign[freeSlot.id] = assign[loneSeatId]; delete assign[loneSeatId]; break; }
     }
   }
 }
