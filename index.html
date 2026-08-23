@@ -61,7 +61,16 @@
   .table-shape.selected{stroke:var(--accent);stroke-width:3;}
   .seat{fill:#fff;stroke:#8a94a3;stroke-width:1.5;cursor:default;}
   .seat.filled{fill:#dbe8ff;stroke:var(--accent-dark);}
-  .seat-label{font-size:10px;fill:#1f2937;text-anchor:middle;pointer-events:none;}
+  /* Pinned to classic, universally-embedded fonts rather than inheriting the OS-native
+     system-ui stack (-apple-system/Segoe UI/Roboto) used elsewhere on the page. Those
+     generic names can resolve to a different actual typeface — with different glyph
+     widths — in a browser's real "print to PDF" text-shaping pass than they do on screen,
+     which throws off the chip sizing computed from an on-screen getBBox() measurement:
+     the chip looks right on screen (and in most print previews) but the text overflows or
+     looks "bubbly" once actually printed/exported, because a wider substituted font no
+     longer fits the chip that was sized for the on-screen font. Arial/Helvetica are
+     resolved identically by both paths in practice, so the two stay in sync. */
+  .seat-label{font-size:10px;font-family:Arial,Helvetica,sans-serif;fill:#1f2937;text-anchor:middle;pointer-events:none;}
   .rotate-handle{fill:#fff;stroke:var(--accent-dark);stroke-width:2;cursor:grab;}
   .rotate-line{stroke:var(--accent-dark);stroke-width:1.5;pointer-events:none;}
   .seat-label{pointer-events:none;}
@@ -111,17 +120,19 @@
   }
   .print-split{display:none;}
   @media print{
-    @page{size:landscape;margin:4mm;}
+    /* Narrow margins and trimmed chrome (title/label text) so more of the page goes to the
+       actual room diagrams, which is what the printout is for. */
+    @page{size:landscape;margin:2mm;}
     body.printing-split > *:not(#printSplitLayout){display:none !important;}
     body.printing-split{background:#fff;}
     body.printing-split #printSplitLayout{
       display:flex !important;flex-direction:column;position:fixed;inset:0;width:100%;height:100%;background:#fff;
     }
     .print-split-col{background:#fff;}
-    .print-split-title{font-size:36px;font-weight:800;text-align:center;margin:0;padding:0;line-height:1.15;flex:0 0 auto;}
-    .print-split-diagrams{flex:1;display:flex;gap:6px;min-height:0;}
+    .print-split-title{font-size:22px;font-weight:800;text-align:center;margin:0;padding:0;line-height:1.15;flex:0 0 auto;}
+    .print-split-diagrams{flex:1;display:flex;gap:4px;min-height:0;}
     .print-split-col{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;}
-    .print-split-label{text-align:center;font-weight:700;font-size:12px;color:#555;flex:0 0 auto;margin:0;line-height:1.3;}
+    .print-split-label{text-align:center;font-weight:700;font-size:10px;color:#555;flex:0 0 auto;margin:0;line-height:1.2;}
     /* The page lies flat between two people approaching from opposite ends of the desk — the
        teacher's side (right column + bottom title) prints right-way-up for them, so the
        student's side (left column, and the title nearest their approach) is rotated 180° to
@@ -2061,7 +2072,12 @@ function renderRoomInto(targetSvg, cls, flip, idPrefix, tight){
       el('circle', {cx:slot.x, cy:slot.y, r:slot.r, class:'seat'+(student?' filled':'')}, g);
       if(student){
         const tg = el('g', {transform:`translate(${slot.x},${slot.y}) rotate(${-trot})`}, g);
-        renderSeatLabel(tg, fitSeatLabel(student.name, slot.r, firstNameCounts), FILLED_SEAT_COLOR, nearestSeatGapHalf(tSlots, slot));
+        // A real "print to PDF" pass can re-shape text with slightly different glyph widths
+        // than the on-screen render this chip was measured against (see the .seat-label
+        // font-family comment) — trimming the print-only budget by 10% leaves headroom so
+        // that residual drift shrinks the font a touch instead of the chip clipping the text.
+        const gap = nearestSeatGapHalf(tSlots, slot);
+        renderSeatLabel(tg, fitSeatLabel(student.name, slot.r, firstNameCounts), FILLED_SEAT_COLOR, tight && isFinite(gap) ? gap * 0.9 : gap);
       }
     }
   }
