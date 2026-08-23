@@ -1480,11 +1480,16 @@ function seatDisplayLines(name, firstNameCounts){
 // overflow, so a slightly-too-big label reads fine instead of needing to be tiny.
 function fitSeatLabel(name, radius, firstNameCounts){
   const lines = seatDisplayLines(name, firstNameCounts);
-  const longest = Math.max(...lines.map(l => l.length));
+  // Sized off the first name alone (not the initial line) so the first name — the line that
+  // actually identifies the student at a glance — gets the biggest font the circle allows,
+  // instead of being shrunk to accommodate a two-character initial line underneath it.
+  const longest = lines[0].length;
   let size = radius * 0.85;
   if(longest > 9) size = radius * 0.58;
   else if(longest > 6) size = radius * 0.7;
-  return { lines, size: Math.max(size, 9) };
+  size = Math.max(size, 9);
+  const size2 = lines.length > 1 ? Math.max(size * 0.6, 8) : 0;
+  return { lines, size, size2 };
 }
 // Draws a 1- or 2-line seat label centered in the given upright group, with a rounded
 // same-color-as-the-seat chip behind it sized to the actual rendered text. When the text fits
@@ -1492,18 +1497,24 @@ function fitSeatLabel(name, radius, firstNameCounts){
 // the borderless fill silently extends past the circle's own edge — but only up to
 // maxHalfWidth (the gap to the nearest neighboring seat), so two adjacent overflowing chips
 // shrink to fit side by side instead of merging into one unreadable blob.
+// For a 2-line label the first name sits centered on the seat exactly as a 1-line label would
+// (same y as the single-line case), and the smaller initial line is tucked in underneath it,
+// rather than the two lines being centered as one symmetric block — that block layout is what
+// forced the first name smaller than it needed to be and made adjacent long labels blur together.
 function renderSeatLabel(parent, lbl, seatColor, maxHalfWidth){
-  function draw(size){
+  function draw(scale){
     while(parent.firstChild) parent.removeChild(parent.firstChild);
     const texts = [];
+    const size1 = lbl.size * scale;
     if(lbl.lines.length === 1){
-      const t = el('text', {x:0, y:size*0.35, class:'seat-label', style:`font-size:${size}px;font-weight:700;`}, parent);
+      const t = el('text', {x:0, y:size1*0.35, class:'seat-label', style:`font-size:${size1}px;font-weight:700;`}, parent);
       t.textContent = lbl.lines[0];
       texts.push(t);
     } else {
-      const t1 = el('text', {x:0, y:-size*0.12, class:'seat-label', style:`font-size:${size}px;font-weight:700;`}, parent);
+      const size2 = lbl.size2 * scale;
+      const t1 = el('text', {x:0, y:size1*0.35, class:'seat-label', style:`font-size:${size1}px;font-weight:700;`}, parent);
       t1.textContent = lbl.lines[0];
-      const t2 = el('text', {x:0, y:size*0.98, class:'seat-label', style:`font-size:${size}px;font-weight:700;`}, parent);
+      const t2 = el('text', {x:0, y:size1*0.35+size2*0.88, class:'seat-label', style:`font-size:${size2}px;font-weight:700;`}, parent);
       t2.textContent = lbl.lines[1];
       texts.push(t1, t2);
     }
@@ -1516,22 +1527,23 @@ function renderSeatLabel(parent, lbl, seatColor, maxHalfWidth){
     return { texts, minX, minY, maxX, maxY };
   }
 
-  let size = lbl.size;
-  let m = draw(size);
+  let scale = 1;
+  let m = draw(scale);
   if(maxHalfWidth && isFinite(maxHalfWidth)){
-    // The chip itself extends size*0.16 past the raw text on each side (see pad, below) — that
-    // has to be included in what's being fit against maxHalfWidth, or the chip can still clip
-    // its neighbor by exactly that padding even though the text measurement "fit".
-    const pad0 = size*0.16;
+    // The chip itself extends past the raw text on each side (see pad, below) — that has to be
+    // included in what's being fit against maxHalfWidth, or the chip can still clip its neighbor
+    // by exactly that padding even though the text measurement "fit". Both lines scale together
+    // so the first-name/initial size ratio established by fitSeatLabel is preserved while shrinking.
+    const pad0 = lbl.size*scale*0.16;
     const totalHalfW = (m.maxX - m.minX)/2 + pad0;
     if(totalHalfW > maxHalfWidth && totalHalfW > 0){
       // Text and padding both scale linearly with font size, so this one correction lands
-      // almost exactly — floored at 7px so a name never shrinks to the point of disappearing.
-      size = Math.max(size * (maxHalfWidth / totalHalfW), 7);
-      m = draw(size);
+      // almost exactly — floored so the first name never shrinks to the point of disappearing.
+      scale = Math.max(scale * (maxHalfWidth / totalHalfW), 7/lbl.size);
+      m = draw(scale);
     }
   }
-  const pad = size*0.16;
+  const pad = lbl.size*scale*0.16;
   const chip = el('rect', {
     x:m.minX-pad, y:m.minY-pad, width:(m.maxX-m.minX)+pad*2, height:(m.maxY-m.minY)+pad*2,
     rx:(m.maxY-m.minY)/2+pad, fill:seatColor, 'pointer-events':'none'
