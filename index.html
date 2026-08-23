@@ -150,6 +150,9 @@
       <button id="exportBtn">Export JSON</button>
       <button id="importBtn">Import JSON</button>
       <input type="file" id="importFile" accept="application/json" style="display:none;">
+      <button id="openFileBtn" style="display:none;">📂 Open &amp; Auto-Save File…</button>
+      <span class="hint" id="linkedFileHint" style="display:none;"></span>
+      <button id="unlinkFileBtn" class="small" style="display:none;">Disconnect</button>
       <button id="lockBtn">🔒 Lock</button>
     </div>
   </div>
@@ -171,6 +174,10 @@
       </div>
       <div class="hint">Tip: paste multiple names separated by commas or new lines, then Add.</div>
       <ul class="studentlist" id="studentList"></ul>
+      <div class="row" style="margin-top:8px;">
+        <select id="importClassSelect" style="flex:1;"></select>
+        <button id="importClassBtn" class="small">+ Import Students</button>
+      </div>
     </div>
 
     <div class="panel">
@@ -389,6 +396,9 @@ let selectedTableId = null;
 let selectedWallId = null;
 let selectedDoorId = null;
 let drag = null; // {type:'table'|'rotate'|'wall'|'door'|'doorRotate'|'wall-draw', ...}
+// When set (via "Open & Auto-Save File"), every saveDB() also writes back to this real file —
+// the .json behaves like an opened document instead of a one-time import/export round trip.
+let linkedFileHandle = null;
 // the visible viewBox, recomputed to fit content on every full render() so the room can
 // grow (or shrink back) without limit while the app zooms to keep everything in frame
 let currentViewBox = { x:0, y:0, w:BASE_ROOM_W, h:BASE_ROOM_H };
@@ -504,7 +514,27 @@ function loadDB(){
   }catch(e){ console.warn("Failed to load saved data", e); }
   return { classes: [] };
 }
-function saveDB(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); }
+function saveDB(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+  if(linkedFileHandle) queueLinkedFileWrite();
+}
+// Serializes writes to the linked file — saveDB() fires many times in quick succession (drags,
+// generation, etc.), and calling createWritable() concurrently on the same handle can conflict.
+let linkedWriteInFlight = false, linkedWriteQueued = false;
+async function queueLinkedFileWrite(){
+  if(linkedWriteInFlight){ linkedWriteQueued = true; return; }
+  linkedWriteInFlight = true;
+  try{
+    const writable = await linkedFileHandle.createWritable();
+    await writable.write(JSON.stringify(db, null, 2));
+    await writable.close();
+  }catch(err){
+    console.warn('Auto-save to linked file failed:', err);
+  }finally{
+    linkedWriteInFlight = false;
+    if(linkedWriteQueued){ linkedWriteQueued = false; queueLinkedFileWrite(); }
+  }
+}
 
 function getClass(){ return db.classes.find(c => c.id === currentClassId) || db.classes[0]; }
 function relKey(a,b){ return [a,b].sort().join('|'); }
@@ -1216,6 +1246,11 @@ function renderStudents(cls){
     li.appendChild(del);
     list.appendChild(li);
   }
+
+  const importSelect = document.getElementById('importClassSelect');
+  const otherClasses = db.classes.filter(c => c.id !== cls.id);
+  importSelect.innerHTML = otherClasses.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  document.getElementById('importClassBtn').disabled = otherClasses.length === 0;
 
   const relA = document.getElementById('relA'), relB = document.getElementById('relB');
   const opts = cls.students.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
@@ -2181,6 +2216,74 @@ document.getElementById('importFile').onchange = (e) => {
   };
   reader.readAsText(file);
   e.target.value = '';
+};
+
+document.getElementById('importClassBtn').onclick = () => {
+  const cls = getClass();
+  const source = db.classes.find(c => c.id === document.getElementById('importClassSelect').value);
+  if(!cls || !source) return;
+  const existingNames = new Set(cls.students.map(s => s.name.trim().toLowerCase()));
+  let added = 0, skipped = 0;
+  for(const s of source.students){
+    const key = s.name.trim().toLowerCase();
+    if(existingNames.has(key)){ skipped++; continue; }
+    cls.students.push({ id: uid(), name: s.name });
+    existingNames.add(key);
+    added++;
+  }
+  saveDB(); render();
+  alert(`Imported ${added} student${added===1?'':'s'} from ${source.name}.` + (skipped ? ` Skipped ${skipped} already in this class.` : ''));
+};
+
+// ---------- open & auto-save a real .json file (like opening a document) ----------
+// Uses the File System Access API (Chromium-based browsers only) so the loaded file keeps
+// getting written back to on every change, instead of the plain Import/Export round trip
+// (pick a file once, then only ever save to browser storage until you remember to re-export).
+async function verifyReadWritePermission(handle){
+  const opts = { mode: 'readwrite' };
+  if((await handle.queryPermission(opts)) === 'granted') return true;
+  if((await handle.requestPermission(opts)) === 'granted') return true;
+  return false;
+}
+function updateLinkedFileUI(name){
+  const hint = document.getElementById('linkedFileHint');
+  const unlinkBtn = document.getElementById('unlinkFileBtn');
+  if(linkedFileHandle){
+    hint.style.display = '';
+    hint.textContent = `📄 ${name} (auto-saving)`;
+    unlinkBtn.style.display = '';
+  } else {
+    hint.style.display = 'none';
+    unlinkBtn.style.display = 'none';
+  }
+}
+async function openLinkedFile(){
+  try{
+    const [handle] = await window.showOpenFilePicker({
+      types: [{ description: 'Seating plan JSON', accept: {'application/json': ['.json']} }],
+    });
+    const canWrite = await verifyReadWritePermission(handle);
+    const file = await handle.getFile();
+    const parsed = JSON.parse(await file.text());
+    if(!parsed || !Array.isArray(parsed.classes)) throw new Error('Invalid file — expected a seating plan JSON export.');
+    db = parsed;
+    currentClassId = db.classes[0] ? db.classes[0].id : null;
+    linkedFileHandle = canWrite ? handle : null;
+    updateLinkedFileUI(file.name);
+    if(!canWrite) alert('Opened the file, but write permission was declined — changes will only be saved in the browser. Use Export JSON to save a copy.');
+    saveDB(); render();
+    if(getClass()) openPresent();
+  }catch(err){
+    if(err.name !== 'AbortError') alert('Could not open file: ' + err.message);
+  }
+}
+if('showOpenFilePicker' in window){
+  document.getElementById('openFileBtn').style.display = '';
+  document.getElementById('openFileBtn').onclick = openLinkedFile;
+}
+document.getElementById('unlinkFileBtn').onclick = () => {
+  linkedFileHandle = null;
+  updateLinkedFileUI();
 };
 
 // ---------- teacher-mode PIN lock ----------
