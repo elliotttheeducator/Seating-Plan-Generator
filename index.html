@@ -2222,17 +2222,46 @@ document.getElementById('importClassBtn').onclick = () => {
   const cls = getClass();
   const source = db.classes.find(c => c.id === document.getElementById('importClassSelect').value);
   if(!cls || !source) return;
-  const existingNames = new Set(cls.students.map(s => s.name.trim().toLowerCase()));
+  const byNameLocal = new Map(cls.students.map(s => [s.name.trim().toLowerCase(), s]));
+  // Maps every source student id to the id they end up with here — either a newly-created
+  // student, or the existing local student they matched by name — so relationships and
+  // groups (which reference ids, not names) can be translated across the id boundary.
+  const idMap = new Map();
   let added = 0, skipped = 0;
   for(const s of source.students){
     const key = s.name.trim().toLowerCase();
-    if(existingNames.has(key)){ skipped++; continue; }
-    cls.students.push({ id: uid(), name: s.name });
-    existingNames.add(key);
+    const existing = byNameLocal.get(key);
+    if(existing){ idMap.set(s.id, existing.id); skipped++; continue; }
+    const copy = { id: uid(), name: s.name };
+    cls.students.push(copy);
+    byNameLocal.set(key, copy);
+    idMap.set(s.id, copy.id);
     added++;
   }
+
+  let rulesAdded = 0;
+  for(const key in (source.relationships || {})){
+    const [a, b] = key.split('|');
+    if(!idMap.has(a) || !idMap.has(b)) continue;
+    const localKey = relKey(idMap.get(a), idMap.get(b));
+    if(cls.relationships[localKey]) continue; // don't clobber a rule already set locally
+    cls.relationships[localKey] = source.relationships[key];
+    rulesAdded++;
+  }
+
+  let groupsAdded = 0;
+  if(!cls.groups) cls.groups = [];
+  for(const g of (source.groups || [])){
+    const mapped = g.studentIds.map(id => idMap.get(id)).filter(Boolean);
+    if(mapped.length < 2) continue; // not enough of this group actually came along
+    cls.groups.push({ id: uid(), name: g.name, studentIds: mapped });
+    groupsAdded++;
+  }
+
   saveDB(); render();
-  alert(`Imported ${added} student${added===1?'':'s'} from ${source.name}.` + (skipped ? ` Skipped ${skipped} already in this class.` : ''));
+  alert(`Imported ${added} student${added===1?'':'s'} from ${source.name}`
+    + (skipped ? ` (${skipped} already here)` : '')
+    + ` — plus ${rulesAdded} proximity/pairing rule${rulesAdded===1?'':'s'} and ${groupsAdded} friend group${groupsAdded===1?'':'s'} that involved them.`);
 };
 
 // ---------- open & auto-save a real .json file (like opening a document) ----------
