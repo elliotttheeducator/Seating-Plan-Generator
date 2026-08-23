@@ -668,6 +668,20 @@ function seatLocalSlots(t){
   if(t.shape === 'hex') return hexSeatSlots(t);
   return rectSeatSlots(t);
 }
+// Half the distance to the closest other seat at the same table — the most a label's chip can
+// grow on each side before it would touch the neighboring seat's own chip. Two adjacent seats
+// both overflowing toward each other (e.g. "Advait" next to "Lucas") used to just let their
+// chips merge into an unreadable blob; this gives renderSeatLabel a hard ceiling to shrink to
+// instead, since font size scales cleanly with a table's own seat spacing already.
+function nearestSeatGapHalf(slots, slot){
+  let minDist = Infinity;
+  for(const other of slots){
+    if(other === slot) continue;
+    const d = Math.hypot(other.x - slot.x, other.y - slot.y);
+    if(d < minDist) minDist = d;
+  }
+  return minDist === Infinity ? Infinity : (minDist / 2 - 3);
+}
 // Seat size scales with the table: diameter is ~85% of the width each seat gets to itself
 // (table width / seats-per-edge), so bigger tables (or fewer seats per side) get bigger,
 // more legible circles instead of one fixed size for every table.
@@ -1407,7 +1421,8 @@ function renderCanvas(cls){
     const verts = tableLocalVerts(t).map(p=>`${p.x},${p.y}`).join(' ');
     el('polygon', {points:verts, class:'table-shape'+(t.id===selectedTableId?' selected':''), style:`fill:${resolveTableFill(cls,t,'woodPattern')}`, 'data-role':'table-body','data-id':t.id}, g);
 
-    for(const slot of seatLocalSlots(t)){
+    const tSlots = seatLocalSlots(t);
+    for(const slot of tSlots){
       const studentId = getAssignment(cls, slot.id);
       const student = studentId ? cls.students.find(s=>s.id===studentId) : null;
       const locked = isSoloDesk(t) && t.lockedStudentId;
@@ -1415,7 +1430,7 @@ function renderCanvas(cls){
       if(student){
         // counter-rotate so names stay upright regardless of table rotation
         const tg = el('g', {transform:`translate(${slot.x},${slot.y}) rotate(${-t.rot})`}, g);
-        renderSeatLabel(tg, fitSeatLabel(student.name, slot.r, firstNameCounts), FILLED_SEAT_COLOR);
+        renderSeatLabel(tg, fitSeatLabel(student.name, slot.r, firstNameCounts), FILLED_SEAT_COLOR, nearestSeatGapHalf(tSlots, slot));
         if(locked) el('text', {x:0, y:-slot.r-4, 'text-anchor':'middle', 'font-size':11, fill:'#d97706', 'pointer-events':'none'}, tg).textContent = '🔒';
       }
     }
@@ -1472,34 +1487,56 @@ function fitSeatLabel(name, radius, firstNameCounts){
   return { lines, size: Math.max(size, 9) };
 }
 // Draws a 1- or 2-line seat label centered in the given upright group, with a rounded
-// same-color-as-the-seat chip behind it sized to the actual rendered text. When the text
-// fits inside the seat circle the chip is invisible (same color, fully covered); when it
-// doesn't, the borderless fill silently extends past the circle's own edge.
-function renderSeatLabel(parent, lbl, seatColor){
-  const texts = [];
-  if(lbl.lines.length === 1){
-    const t = el('text', {x:0, y:lbl.size*0.35, class:'seat-label', style:`font-size:${lbl.size}px;font-weight:700;`}, parent);
-    t.textContent = lbl.lines[0];
-    texts.push(t);
-  } else {
-    const t1 = el('text', {x:0, y:-lbl.size*0.12, class:'seat-label', style:`font-size:${lbl.size}px;font-weight:700;`}, parent);
-    t1.textContent = lbl.lines[0];
-    const t2 = el('text', {x:0, y:lbl.size*0.98, class:'seat-label', style:`font-size:${lbl.size}px;font-weight:700;`}, parent);
-    t2.textContent = lbl.lines[1];
-    texts.push(t1, t2);
+// same-color-as-the-seat chip behind it sized to the actual rendered text. When the text fits
+// inside the seat circle the chip is invisible (same color, fully covered); when it doesn't,
+// the borderless fill silently extends past the circle's own edge — but only up to
+// maxHalfWidth (the gap to the nearest neighboring seat), so two adjacent overflowing chips
+// shrink to fit side by side instead of merging into one unreadable blob.
+function renderSeatLabel(parent, lbl, seatColor, maxHalfWidth){
+  function draw(size){
+    while(parent.firstChild) parent.removeChild(parent.firstChild);
+    const texts = [];
+    if(lbl.lines.length === 1){
+      const t = el('text', {x:0, y:size*0.35, class:'seat-label', style:`font-size:${size}px;font-weight:700;`}, parent);
+      t.textContent = lbl.lines[0];
+      texts.push(t);
+    } else {
+      const t1 = el('text', {x:0, y:-size*0.12, class:'seat-label', style:`font-size:${size}px;font-weight:700;`}, parent);
+      t1.textContent = lbl.lines[0];
+      const t2 = el('text', {x:0, y:size*0.98, class:'seat-label', style:`font-size:${size}px;font-weight:700;`}, parent);
+      t2.textContent = lbl.lines[1];
+      texts.push(t1, t2);
+    }
+    let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+    for(const t of texts){
+      const b = t.getBBox();
+      minX=Math.min(minX,b.x); minY=Math.min(minY,b.y);
+      maxX=Math.max(maxX,b.x+b.width); maxY=Math.max(maxY,b.y+b.height);
+    }
+    return { texts, minX, minY, maxX, maxY };
   }
-  let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
-  for(const t of texts){
-    const b = t.getBBox();
-    minX=Math.min(minX,b.x); minY=Math.min(minY,b.y);
-    maxX=Math.max(maxX,b.x+b.width); maxY=Math.max(maxY,b.y+b.height);
+
+  let size = lbl.size;
+  let m = draw(size);
+  if(maxHalfWidth && isFinite(maxHalfWidth)){
+    // The chip itself extends size*0.16 past the raw text on each side (see pad, below) — that
+    // has to be included in what's being fit against maxHalfWidth, or the chip can still clip
+    // its neighbor by exactly that padding even though the text measurement "fit".
+    const pad0 = size*0.16;
+    const totalHalfW = (m.maxX - m.minX)/2 + pad0;
+    if(totalHalfW > maxHalfWidth && totalHalfW > 0){
+      // Text and padding both scale linearly with font size, so this one correction lands
+      // almost exactly — floored at 7px so a name never shrinks to the point of disappearing.
+      size = Math.max(size * (maxHalfWidth / totalHalfW), 7);
+      m = draw(size);
+    }
   }
-  const pad = lbl.size*0.16;
+  const pad = size*0.16;
   const chip = el('rect', {
-    x:minX-pad, y:minY-pad, width:(maxX-minX)+pad*2, height:(maxY-minY)+pad*2,
-    rx:(maxY-minY)/2+pad, fill:seatColor, 'pointer-events':'none'
+    x:m.minX-pad, y:m.minY-pad, width:(m.maxX-m.minX)+pad*2, height:(m.maxY-m.minY)+pad*2,
+    rx:(m.maxY-m.minY)/2+pad, fill:seatColor, 'pointer-events':'none'
   });
-  parent.insertBefore(chip, texts[0]);
+  parent.insertBefore(chip, m.texts[0]);
 }
 function escapeHtml(s){
   return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -2000,7 +2037,8 @@ function renderRoomInto(targetSvg, cls, flip, idPrefix, tight){
     const g = el('g', {transform:`translate(${tx},${ty}) rotate(${trot})`}, targetSvg);
     const verts = tableLocalVerts(t).map(p=>`${p.x},${p.y}`).join(' ');
     el('polygon', {points:verts, class:'table-shape', style:`fill:${resolveTableFill(cls,t,woodId)}`}, g);
-    for(const slot of seatLocalSlots(t)){
+    const tSlots = seatLocalSlots(t);
+    for(const slot of tSlots){
       const studentId = getAssignment(cls, slot.id);
       const student = studentId ? cls.students.find(s=>s.id===studentId) : null;
       // No extra scale-up here (unlike editor labels elsewhere) — the seat spacing is
@@ -2009,7 +2047,7 @@ function renderRoomInto(targetSvg, cls, flip, idPrefix, tight){
       el('circle', {cx:slot.x, cy:slot.y, r:slot.r, class:'seat'+(student?' filled':'')}, g);
       if(student){
         const tg = el('g', {transform:`translate(${slot.x},${slot.y}) rotate(${-trot})`}, g);
-        renderSeatLabel(tg, fitSeatLabel(student.name, slot.r, firstNameCounts), FILLED_SEAT_COLOR);
+        renderSeatLabel(tg, fitSeatLabel(student.name, slot.r, firstNameCounts), FILLED_SEAT_COLOR, nearestSeatGapHalf(tSlots, slot));
       }
     }
   }
