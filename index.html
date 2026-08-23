@@ -1504,64 +1504,84 @@ function fitSeatLabel(name, radius, firstNameCounts){
   const size2 = lines.length > 1 ? size : 0;
   return { lines, size, size2 };
 }
+// Average glyph width for the bold sans-serif label font, as a fraction of font-size — an
+// estimate of a string's rendered width used INSTEAD of measuring the actual glyphs with
+// getBBox(). Paired with textLength/lengthAdjust below (which forces the glyphs to occupy
+// exactly this estimated width), the estimate becomes the string's real on-page width in any
+// renderer, so the chip sizing no longer depends on which actual typeface ends up drawing the
+// text. That mattered because a browser's real "print to PDF" pass can substitute a different
+// physical font for the same font-family name than the on-screen renderer uses — different
+// enough in its glyph metrics that a chip sized against an on-screen getBBox() measurement
+// came out mis-sized (too small, text spilling past it) once actually printed, even though it
+// looked right in the app itself and in the print preview (both of which use the on-screen
+// font). Forcing a fixed, font-independent width sidesteps the mismatch instead of chasing it.
+const AVG_CHAR_WIDTH_RATIO = 0.62;
+// Fixed cap-height/descender allowance, as a fraction of font-size, standing in for a real
+// font's own ascent/descent metrics — same reasoning as the width estimate above.
+const ASCENT_RATIO = 0.72, DESCENT_RATIO = 0.22;
+function estimateTextWidth(str, fontSize){
+  return Math.max(str.length, 1) * fontSize * AVG_CHAR_WIDTH_RATIO;
+}
 // Draws a 1- or 2-line seat label centered in the given upright group, with a rounded
-// same-color-as-the-seat chip behind it sized to the actual rendered text. When the text fits
-// inside the seat circle the chip is invisible (same color, fully covered); when it doesn't,
-// the borderless fill silently extends past the circle's own edge — but only up to
-// maxHalfWidth (the gap to the nearest neighboring seat), so two adjacent overflowing chips
-// shrink to fit side by side instead of merging into one unreadable blob.
+// same-color-as-the-seat chip behind it sized to the (estimated, not measured — see above)
+// rendered text. When the text fits inside the seat circle the chip is invisible (same color,
+// fully covered); when it doesn't, the borderless fill silently extends past the circle's own
+// edge — but only up to maxHalfWidth (the gap to the nearest neighboring seat), so two adjacent
+// overflowing chips shrink to fit side by side instead of merging into one unreadable blob.
 // For a 2-line label the first name sits centered on the seat exactly as a 1-line label would
 // (same y as the single-line case), and the smaller initial line is tucked in underneath it,
 // rather than the two lines being centered as one symmetric block — that block layout is what
 // forced the first name smaller than it needed to be and made adjacent long labels blur together.
 function renderSeatLabel(parent, lbl, seatColor, maxHalfWidth){
-  function draw(scale){
-    while(parent.firstChild) parent.removeChild(parent.firstChild);
-    const texts = [];
+  function layout(scale){
     const size1 = lbl.size * scale;
-    if(lbl.lines.length === 1){
-      const t = el('text', {x:0, y:size1*0.35, class:'seat-label', style:`font-size:${size1}px;font-weight:700;`}, parent);
-      t.textContent = lbl.lines[0];
-      texts.push(t);
-    } else {
+    const w1 = estimateTextWidth(lbl.lines[0], size1);
+    const y1 = size1*0.35;
+    const lines = [{ text: lbl.lines[0], size: size1, y: y1, w: w1 }];
+    let minY = y1 - size1*ASCENT_RATIO, maxY = y1 + size1*DESCENT_RATIO;
+    let halfW = w1/2;
+    if(lbl.lines.length > 1){
       const size2 = lbl.size2 * scale;
-      const t1 = el('text', {x:0, y:size1*0.35, class:'seat-label', style:`font-size:${size1}px;font-weight:700;`}, parent);
-      t1.textContent = lbl.lines[0];
-      const t2 = el('text', {x:0, y:size1*0.35+size2*0.88, class:'seat-label', style:`font-size:${size2}px;font-weight:700;`}, parent);
-      t2.textContent = lbl.lines[1];
-      texts.push(t1, t2);
+      const w2 = estimateTextWidth(lbl.lines[1], size2);
+      const y2 = y1 + size2*0.88;
+      lines.push({ text: lbl.lines[1], size: size2, y: y2, w: w2 });
+      minY = Math.min(minY, y2 - size2*ASCENT_RATIO);
+      maxY = Math.max(maxY, y2 + size2*DESCENT_RATIO);
+      halfW = Math.max(halfW, w2/2);
     }
-    let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
-    for(const t of texts){
-      const b = t.getBBox();
-      minX=Math.min(minX,b.x); minY=Math.min(minY,b.y);
-      maxX=Math.max(maxX,b.x+b.width); maxY=Math.max(maxY,b.y+b.height);
-    }
-    return { texts, minX, minY, maxX, maxY };
+    return { lines, minY, maxY, halfW };
   }
 
   let scale = 1;
-  let m = draw(scale);
+  let m = layout(scale);
   if(maxHalfWidth && isFinite(maxHalfWidth)){
     // The chip itself extends past the raw text on each side (see pad, below) — that has to be
     // included in what's being fit against maxHalfWidth, or the chip can still clip its neighbor
     // by exactly that padding even though the text measurement "fit". Both lines scale together
     // so the first-name/initial size ratio established by fitSeatLabel is preserved while shrinking.
     const pad0 = lbl.size*scale*0.16;
-    const totalHalfW = (m.maxX - m.minX)/2 + pad0;
+    const totalHalfW = m.halfW + pad0;
     if(totalHalfW > maxHalfWidth && totalHalfW > 0){
       // Text and padding both scale linearly with font size, so this one correction lands
       // almost exactly — floored so the first name never shrinks to the point of disappearing.
       scale = Math.max(scale * (maxHalfWidth / totalHalfW), 7/lbl.size);
-      m = draw(scale);
+      m = layout(scale);
     }
   }
+  while(parent.firstChild) parent.removeChild(parent.firstChild);
   const pad = lbl.size*scale*0.16;
   const chip = el('rect', {
-    x:m.minX-pad, y:m.minY-pad, width:(m.maxX-m.minX)+pad*2, height:(m.maxY-m.minY)+pad*2,
+    x:-m.halfW-pad, y:m.minY-pad, width:m.halfW*2+pad*2, height:(m.maxY-m.minY)+pad*2,
     rx:(m.maxY-m.minY)/2+pad, fill:seatColor, 'pointer-events':'none'
   });
-  parent.insertBefore(chip, m.texts[0]);
+  parent.appendChild(chip);
+  for(const line of m.lines){
+    const t = el('text', {
+      x:0, y:line.y, class:'seat-label', style:`font-size:${line.size}px;font-weight:700;`,
+      textLength: line.w, lengthAdjust:'spacingAndGlyphs'
+    }, parent);
+    t.textContent = line.text;
+  }
 }
 function escapeHtml(s){
   return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -2072,12 +2092,7 @@ function renderRoomInto(targetSvg, cls, flip, idPrefix, tight){
       el('circle', {cx:slot.x, cy:slot.y, r:slot.r, class:'seat'+(student?' filled':'')}, g);
       if(student){
         const tg = el('g', {transform:`translate(${slot.x},${slot.y}) rotate(${-trot})`}, g);
-        // A real "print to PDF" pass can re-shape text with slightly different glyph widths
-        // than the on-screen render this chip was measured against (see the .seat-label
-        // font-family comment) — trimming the print-only budget by 10% leaves headroom so
-        // that residual drift shrinks the font a touch instead of the chip clipping the text.
-        const gap = nearestSeatGapHalf(tSlots, slot);
-        renderSeatLabel(tg, fitSeatLabel(student.name, slot.r, firstNameCounts), FILLED_SEAT_COLOR, tight && isFinite(gap) ? gap * 0.9 : gap);
+        renderSeatLabel(tg, fitSeatLabel(student.name, slot.r, firstNameCounts), FILLED_SEAT_COLOR, nearestSeatGapHalf(tSlots, slot));
       }
     }
   }
@@ -2211,19 +2226,8 @@ function printSplitView(){
   document.getElementById('printTitleTop').textContent = title;
   document.getElementById('printTitleBottom').textContent = title;
 
-  // renderRoomInto measures every seat label with getBBox() to size/shrink its chip — but
-  // #printSplitLayout is display:none until an actual print media context applies its own
-  // override, and getBBox() can return bogus (zero-ish) results for elements inside a
-  // display:none ancestor. That missized the chip against the real text, leaving part of a
-  // long name (e.g. the "H" of "Hannah") sitting directly on the dark carpet with no chip
-  // behind it. Force the layout visible-but-off-screen just long enough to render and measure
-  // correctly, then hand back to the stylesheet/print CSS.
-  const layout = document.getElementById('printSplitLayout');
-  const prevStyle = layout.getAttribute('style');
-  layout.style.cssText = (prevStyle || '') + ';display:flex !important;position:fixed;left:-99999px;top:0;';
   renderRoomInto(document.getElementById('printSvgStudent'), cls, false, 'printStudent', true);
   renderRoomInto(document.getElementById('printSvgTeacher'), cls, true, 'printTeacher', true);
-  if(prevStyle === null) layout.removeAttribute('style'); else layout.setAttribute('style', prevStyle);
 
   document.body.classList.add('printing-split');
   window.print();
