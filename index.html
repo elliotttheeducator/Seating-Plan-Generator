@@ -342,6 +342,13 @@
           <button id="resetHistoryBtn" style="flex:1;font-size:12px;">🔁 Reset Pairing History</button>
         </div>
       </div>
+      <div class="panel" style="margin-top:12px;">
+        <h2>Lab Mode</h2>
+        <div class="hint">Off (default): every table is used together regardless of shape — a mix of 4-seat and 2-seat tables all get filled as one room. On: pair desks and group tables are kept as two separate layouts, and the Group Tables / Pair Up toggle switches which set is in use (for a room built with two distinct physical arrangements, like a lab with benches and desks).</div>
+        <label class="hint" style="display:flex;align-items:center;gap:6px;margin-top:8px;">
+          <input type="checkbox" id="labModeToggle"> Keep pair desks and group tables as separate layouts
+        </label>
+      </div>
     </div>
     <div class="pairs-col">
       <div class="panel">
@@ -730,8 +737,13 @@ function allSeatsWithWorld(cls, tables){
 // offered to either mode's generation, so the student pinned there never gets reshuffled.
 function isSoloDesk(t){ return t.preset === 'solo'; }
 function isPairDeskTable(t){ return !isSoloDesk(t) && (t.preset === 'rectPair' || seatLocalSlots(t).length <= 2); }
+// By default every non-solo table is fair game for either mode — a class with a mix of 4-seat
+// and 2-seat tables just wants them all used together, which is the common case. Only when a
+// teacher explicitly turns on Lab Mode (cls.labModeEnabled) does the room split into two
+// separate layouts (pair desks vs. group tables) that Generate and the mode toggle keep apart.
 function tablesForMode(cls, mode){
   const seatable = cls.tables.filter(t => !isSoloDesk(t));
+  if(!cls.labModeEnabled) return seatable;
   const pairT = seatable.filter(isPairDeskTable);
   const groupT = seatable.filter(t => !isPairDeskTable(t));
   if(mode === 'pair') return pairT.length ? pairT : seatable;
@@ -1303,6 +1315,8 @@ function renderStudents(cls){
     ? `🔁 Remembering ${pairedCount} past pairing${pairedCount===1?'':'s'} — Generate steers away from repeats.`
     : `🔁 No pairing history yet — recorded each time you open Present view.`;
 
+  document.getElementById('labModeToggle').checked = !!cls.labModeEnabled;
+
   renderGroups(cls);
 }
 
@@ -1772,6 +1786,11 @@ document.getElementById('resetHistoryBtn').onclick = () => {
   if(!confirm('Forget all remembered pairings for this class? Future seating generation will no longer avoid past partners.')) return;
   cls.pairHistory = {};
   cls.lastHistorySignature = null;
+  saveDB(); render();
+};
+document.getElementById('labModeToggle').onchange = (e) => {
+  const cls = getClass();
+  cls.labModeEnabled = e.target.checked;
   saveDB(); render();
 };
 
