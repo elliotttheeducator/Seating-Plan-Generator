@@ -59,8 +59,8 @@
   .table-shape{stroke:#a39d8f;stroke-width:2;cursor:grab;}
   input[type=color]{width:26px;height:24px;padding:1px;border:1px solid var(--border);border-radius:4px;vertical-align:middle;cursor:pointer;}
   .table-shape.selected{stroke:var(--accent);stroke-width:3;}
-  .seat{fill:#fff;stroke:#8a94a3;stroke-width:1.5;cursor:default;}
-  .seat.filled{fill:#dbe8ff;stroke:var(--accent-dark);}
+  .seat{fill:#fff;stroke:#8a94a3;stroke-width:1.5;cursor:pointer;}
+  .seat.filled{fill:#dbe8ff;stroke:var(--accent-dark);cursor:grab;}
   /* Pinned to classic, universally-embedded fonts rather than inheriting the OS-native
      system-ui stack (-apple-system/Segoe UI/Roboto) used elsewhere on the page. Those
      generic names can resolve to a different actual typeface — with different glyph
@@ -251,6 +251,10 @@
         </span>
         <button id="deleteTableBtn" class="small danger">Delete</button>
       </span>
+      <span class="row" id="selectedSeatBar" style="display:none;">
+        <span class="hint">Seat:</span>
+        <select id="seatStudentSelect"><option value="">— empty —</option></select>
+      </span>
       <div class="sep"></div>
       <button id="presentBtn">🖥️ Present / Print View</button>
       <button id="settingsBtn">⚙️ Settings</button>
@@ -418,7 +422,8 @@ let editRoomMode = false;
 let selectedTableId = null;
 let selectedWallId = null;
 let selectedDoorId = null;
-let drag = null; // {type:'table'|'rotate'|'wall'|'door'|'doorRotate'|'wall-draw', ...}
+let selectedSeatId = null;
+let drag = null; // {type:'table'|'rotate'|'wall'|'door'|'doorRotate'|'wall-draw'|'seat', ...}
 // When set (via "Open & Auto-Save File"), every saveDB() also writes back to this real file —
 // the .json behaves like an opened document instead of a one-time import/export round trip.
 let linkedFileHandle = null;
@@ -864,6 +869,28 @@ function isSeated(cls, studentId){
 function getAssignment(cls, seatId){
   return (cls.assignments || {})[seatId] || null;
 }
+function findSeatById(cls, seatId){
+  for(const t of cls.tables){
+    const slot = seatLocalSlots(t).find(s => s.id === seatId);
+    if(slot) return { t, slot };
+  }
+  return null;
+}
+// Solo desks are pinned via t.lockedStudentId, which Generate reapplies verbatim afterward
+// (see reapplyLockedSeats) regardless of what's actually sitting in cls.assignments right now.
+// A manual seat edit (drag-and-drop, or the seat editor's dropdown) writes cls.assignments
+// directly, so without this the lock would go stale — Generate would silently undo the manual
+// move next time it runs. Called after every manual seat change to keep the two in sync: moving
+// someone out of a locked solo desk unpins them, moving someone into one pins them there.
+function syncSoloLocksToAssignments(cls){
+  for(const t of cls.tables){
+    if(!isSoloDesk(t)) continue;
+    const slot = seatLocalSlots(t)[0];
+    if(!slot) continue;
+    const occupant = getAssignment(cls, slot.id);
+    if(t.lockedStudentId !== occupant) t.lockedStudentId = occupant;
+  }
+}
 function setAssignment(cls, seatId, studentId){
   if(!cls.assignments) cls.assignments = {};
   cls.assignments[seatId] = studentId;
@@ -1252,7 +1279,7 @@ function renderClassTabs(){
       if(nn && nn.trim()){ c.name = nn.trim(); saveDB(); renderClassTabs(); }
     };
     tab.appendChild(nameSpan);
-    tab.onclick = (ev) => { if(ev.target.className!=='x'){ currentClassId = c.id; selectedTableId=null; selectedWallId=null; saveDB(); render(); } };
+    tab.onclick = (ev) => { if(ev.target.className!=='x'){ currentClassId = c.id; selectedTableId=null; selectedWallId=null; selectedSeatId=null; saveDB(); render(); } };
     if(db.classes.length > 1){
       const x = document.createElement('span');
       x.className = 'x'; x.textContent = '✕';
@@ -1437,7 +1464,14 @@ function renderCanvas(cls){
       const studentId = getAssignment(cls, slot.id);
       const student = studentId ? cls.students.find(s=>s.id===studentId) : null;
       const locked = isSoloDesk(t) && t.lockedStudentId;
-      el('circle', {cx:slot.x, cy:slot.y, r:slot.r, class:'seat'+(student?' filled':''), style: locked ? 'stroke:#d97706;stroke-width:2.5;' : ''}, g);
+      const isDragSource = drag && drag.type==='seat' && drag.sourceSeatId===slot.id;
+      const isDragHover = drag && drag.type==='seat' && drag.hoverSeatId===slot.id && !isDragSource;
+      let seatStyle = '';
+      if(isDragHover) seatStyle = 'stroke:var(--accent);stroke-width:3;';
+      else if(slot.id===selectedSeatId) seatStyle = 'stroke:var(--accent-dark);stroke-width:3;';
+      else if(locked) seatStyle = 'stroke:#d97706;stroke-width:2.5;';
+      if(isDragSource) seatStyle += 'opacity:.4;';
+      el('circle', {cx:slot.x, cy:slot.y, r:slot.r, class:'seat'+(student?' filled':''), style:seatStyle, 'data-role':'seat', 'data-id':slot.id}, g);
       if(student){
         // counter-rotate so names stay upright regardless of table rotation
         const tg = el('g', {transform:`translate(${slot.x},${slot.y}) rotate(${-t.rot})`}, g);
@@ -1612,6 +1646,21 @@ function updateSelectedTableBar(cls){
   }
 }
 
+function updateSelectedSeatBar(cls){
+  const bar = document.getElementById('selectedSeatBar');
+  const found = selectedSeatId ? findSeatById(cls, selectedSeatId) : null;
+  if(!found){ selectedSeatId = null; bar.style.display = 'none'; return; }
+  bar.style.display = '';
+  const select = document.getElementById('seatStudentSelect');
+  if(document.activeElement === select) return;
+  const currentId = getAssignment(cls, selectedSeatId);
+  const opts = ['<option value="">— empty —</option>'].concat(
+    cls.students.map(s => `<option value="${s.id}">${escapeHtml(s.name)}${isSeated(cls,s.id) && s.id!==currentId ? ' (seated elsewhere)' : ''}</option>`)
+  );
+  select.innerHTML = opts.join('');
+  select.value = currentId || '';
+}
+
 function syncRoomSizeInputs(cls){
   const wI = document.getElementById('roomWInput'), dI = document.getElementById('roomDInput');
   if(document.activeElement !== wI && document.activeElement !== dI){
@@ -1641,6 +1690,7 @@ function render(){
   currentViewBox = computeFitViewBox(cls);
   renderCanvas(cls);
   updateSelectedTableBar(cls);
+  updateSelectedSeatBar(cls);
   document.getElementById('modeGroupBtn').classList.toggle('active', cls.mode==='group');
   document.getElementById('modePairBtn').classList.toggle('active', cls.mode==='pair');
   document.getElementById('editRoomBtn').classList.toggle('active', editRoomMode);
@@ -1706,14 +1756,27 @@ svg.addEventListener('pointerdown', (e) => {
   }
   if(role === 'table-body'){
     const t = cls.tables.find(tt=>tt.id===id);
-    selectedTableId = id; selectedWallId = null; selectedDoorId = null;
+    selectedTableId = id; selectedWallId = null; selectedDoorId = null; selectedSeatId = null;
     drag = { type:'table', tableId:id, dx:t.x-p.x, dy:t.y-p.y };
     svg.setPointerCapture(e.pointerId);
     render();
     return;
   }
+  if(role === 'seat'){
+    const studentId = getAssignment(cls, id);
+    // Only an occupied seat can be picked up and dragged elsewhere — an empty seat has
+    // nothing to move, but double-clicking it still opens the seat editor below to assign
+    // someone directly. selectedTableId is left alone so the table's own bar (size/rotate/
+    // delete) stays visible while a seat within it is also selected.
+    if(studentId){
+      drag = { type:'seat', sourceSeatId:id, studentId, hoverSeatId:id };
+      svg.setPointerCapture(e.pointerId);
+      renderCanvas(cls);
+    }
+    return;
+  }
   if(role === 'door-rotate-handle'){
-    selectedDoorId = id; selectedTableId=null; selectedWallId=null;
+    selectedDoorId = id; selectedTableId=null; selectedWallId=null; selectedSeatId=null;
     drag = { type:'doorRotate', doorId:id };
     svg.setPointerCapture(e.pointerId);
     render();
@@ -1721,18 +1784,18 @@ svg.addEventListener('pointerdown', (e) => {
   }
   if(role === 'door-body'){
     const d = (cls.doors||[]).find(dd=>dd.id===id);
-    selectedDoorId = id; selectedTableId = null; selectedWallId = null;
+    selectedDoorId = id; selectedTableId = null; selectedWallId = null; selectedSeatId = null;
     drag = { type:'door', doorId:id, dx:d.x-p.x, dy:d.y-p.y };
     svg.setPointerCapture(e.pointerId);
     render();
     return;
   }
   if(role === 'wall'){
-    if(editRoomMode){ selectedWallId = id; selectedTableId=null; selectedDoorId=null; render(); }
+    if(editRoomMode){ selectedWallId = id; selectedTableId=null; selectedDoorId=null; selectedSeatId=null; render(); }
     return;
   }
   if(role === 'canvas-bg'){
-    selectedTableId = null; selectedWallId = null; selectedDoorId = null;
+    selectedTableId = null; selectedWallId = null; selectedDoorId = null; selectedSeatId = null;
     if(editRoomMode){
       drag = { type:'wall-draw', sx:p.x, sy:p.y, rx:p.x, ry:p.y, rw:0, rh:0 };
       svg.setPointerCapture(e.pointerId);
@@ -1772,6 +1835,13 @@ svg.addEventListener('pointermove', (e) => {
     drag.rw = Math.abs(p.x - drag.sx); drag.rh = Math.abs(p.y - drag.sy);
     expandViewBoxToInclude(p);
     renderCanvas(cls);
+  } else if(drag.type === 'seat'){
+    // Pointer capture keeps e.target pinned to the seat the drag started on, so the seat
+    // actually under the cursor right now has to be found by physical position instead.
+    const seatEl = document.elementFromPoint(e.clientX, e.clientY);
+    const hoverEl = seatEl ? seatEl.closest('[data-role="seat"]') : null;
+    const hoverId = hoverEl ? hoverEl.getAttribute('data-id') : null;
+    if(drag.hoverSeatId !== hoverId){ drag.hoverSeatId = hoverId; renderCanvas(cls); }
   }
 });
 
@@ -1789,8 +1859,30 @@ svg.addEventListener('pointerup', (e) => {
       cls.walls.push({ id:uid(), x:drag.rx, y:drag.ry, w:drag.rw, h:drag.rh });
       saveDB();
     }
+  } else if(drag.type === 'seat'){
+    const seatEl = document.elementFromPoint(e.clientX, e.clientY);
+    const hoverEl = seatEl ? seatEl.closest('[data-role="seat"]') : null;
+    const targetId = hoverEl ? hoverEl.getAttribute('data-id') : null;
+    // Always "replace": whoever was in the target seat is simply bumped back out to unseated
+    // (not swapped in behind) — dropping on an occupied seat or an empty one behaves the same
+    // way, which keeps the gesture predictable. Dropping on the seat it started from, or
+    // outside any seat entirely, cancels the move.
+    if(targetId && targetId !== drag.sourceSeatId){
+      delete cls.assignments[targetId];
+      delete cls.assignments[drag.sourceSeatId];
+      cls.assignments[targetId] = drag.studentId;
+      syncSoloLocksToAssignments(cls);
+      saveDB();
+    }
   }
   drag = null;
+  render();
+});
+
+svg.addEventListener('dblclick', (e) => {
+  const roleEl = e.target.closest('[data-role="seat"]');
+  if(!roleEl) return;
+  selectedSeatId = roleEl.getAttribute('data-id');
   render();
 });
 
@@ -2007,6 +2099,20 @@ document.getElementById('soloStudentSelect').addEventListener('change', () => {
   const t = cls.tables.find(tt=>tt.id===selectedTableId);
   if(!t || !isSoloDesk(t)) return;
   setSoloDeskStudent(cls, t, document.getElementById('soloStudentSelect').value);
+  saveDB(); render();
+});
+document.getElementById('seatStudentSelect').addEventListener('change', () => {
+  const cls = getClass();
+  if(!selectedSeatId || !findSeatById(cls, selectedSeatId)) return;
+  const val = document.getElementById('seatStudentSelect').value;
+  // Always-replace, same as the drag gesture: clear this seat, and if the chosen student was
+  // seated somewhere else, clear that seat too — a student only ever occupies one seat.
+  delete cls.assignments[selectedSeatId];
+  if(val){
+    for(const k in cls.assignments) if(cls.assignments[k] === val) delete cls.assignments[k];
+    cls.assignments[selectedSeatId] = val;
+  }
+  syncSoloLocksToAssignments(cls);
   saveDB(); render();
 });
 
