@@ -112,6 +112,14 @@
   .empty-state{padding:100px 20px;text-align:center;}
   .empty-card h2{font-size:16px;color:var(--text);margin:0 0 6px;}
   .empty-card p{color:var(--muted);margin:0;}
+  .home-screen{padding:60px 20px;display:flex;justify-content:center;}
+  .home-card{width:100%;max-width:520px;background:#fff;border:1px solid var(--border);border-radius:12px;padding:28px;text-align:center;}
+  .home-card h2{margin:0 0 14px;font-size:18px;}
+  .home-card a{color:var(--accent);}
+  .filelist{list-style:none;margin:14px 0 0;padding:0;text-align:left;max-height:360px;overflow-y:auto;}
+  .filelist li{margin-bottom:6px;}
+  .filelist li button{width:100%;text-align:left;padding:10px 12px;}
+  .filelist li.hint{padding:10px 0;text-align:center;}
   @media print{
     body.presenting > header, body.presenting > .main, body.presenting > footer{display:none !important;}
     body.presenting .present-bar{display:none !important;}
@@ -153,33 +161,59 @@
     <button id="pinCancelBtn">Cancel</button>
   </div>
 </div>
-<header>
+<header id="appHeader">
   <h1>Seating Plan Generator</h1>
   <div class="tabs" id="classTabs"></div>
   <div class="row" style="margin-top:6px;">
     <div class="hdr-actions row">
+      <button id="homeBtn" style="display:none;">🏠 Home</button>
       <button id="exportBtn">Export JSON</button>
       <button id="importBtn">Import JSON</button>
       <input type="file" id="importFile" accept="application/json" style="display:none;">
-      <button id="createFileBtn" style="display:none;">📄 New Seating Plan File…</button>
-      <button id="openFileBtn" style="display:none;">📂 Open &amp; Auto-Save File…</button>
+      <button id="openFileBtn" style="display:none;">📂 Open File…</button>
       <span class="hint" id="linkedFileHint" style="display:none;"></span>
-      <button id="reconnectFileBtn" class="small" style="display:none;"></button>
       <button id="unlinkFileBtn" class="small" style="display:none;">Disconnect</button>
       <button id="lockBtn">🔒 Lock</button>
     </div>
   </div>
 </header>
 
+<!-- Launch screen: a folder of seating plan files (e.g. synced to OneDrive) picked once and
+     remembered across sessions (see chooseHomeFolder/renderHome). Shown instead of jumping
+     straight into a class whenever a home folder is configured, so opening a specific file is
+     always a deliberate choice from a list rather than silently reusing whatever was open last. -->
+<div class="home-screen" id="homeScreen" style="display:none;">
+  <div class="home-card">
+    <h2>Seating Plan Generator</h2>
+    <div id="homeNoFolder" style="display:none;">
+      <p class="hint">Choose a folder to store your seating plan files in — pick one synced to
+        OneDrive, Google Drive, etc. so your plans follow you across computers, and this browser
+        will remember it and auto-save to whichever file you have open.</p>
+      <button id="chooseFolderBtn" class="primary">📁 Choose Folder…</button>
+      <p class="hint" style="margin-top:10px;">Or <a href="#" id="skipFolderLink">skip and use browser storage only</a>.</p>
+    </div>
+    <div id="homeReconnect" style="display:none;">
+      <p class="hint">Reconnect to your seating plan folder to see your files.</p>
+      <button id="reconnectFolderBtn" class="primary"></button>
+      <p class="hint" style="margin-top:10px;"><a href="#" id="changeFolderLink2">Choose a different folder</a></p>
+    </div>
+    <div id="homeFileList" style="display:none;">
+      <div class="row" style="justify-content:space-between;align-items:center;">
+        <span class="hint" id="homeFolderName"></span>
+        <span class="row">
+          <button id="newPlanBtn" class="primary">+ New Seating Plan</button>
+          <button id="changeFolderBtn" class="small">Change folder</button>
+        </span>
+      </div>
+      <ul class="filelist" id="homeFiles"></ul>
+    </div>
+  </div>
+</div>
+
 <div class="empty-state" id="emptyState" style="display:none;">
   <div class="empty-card">
     <h2>No classes yet</h2>
     <p>Click "+ Add Class" above to create your first class.</p>
-    <p id="emptyCreateFileHint" style="display:none;margin-top:14px;">
-      or <button id="emptyCreateFileBtn">📄 Create New Seating Plan File…</button>
-      — save it to a folder like OneDrive and this browser will auto-save to it and
-      reopen it automatically next time.
-    </p>
   </div>
 </div>
 <div class="main" id="mainArea">
@@ -431,9 +465,14 @@ let selectedWallId = null;
 let selectedDoorId = null;
 let selectedSeatId = null;
 let drag = null; // {type:'table'|'rotate'|'wall'|'door'|'doorRotate'|'wall-draw'|'seat', ...}
-// When set (via "Open & Auto-Save File"), every saveDB() also writes back to this real file —
-// the .json behaves like an opened document instead of a one-time import/export round trip.
+// When set (by opening a file from the home folder, "Open File…", or "Export"), every saveDB()
+// also writes back to this real file — the .json behaves like an opened document instead of a
+// one-time import/export round trip.
 let linkedFileHandle = null;
+// The folder (chosen once via chooseHomeFolder, remembered across sessions) that the launch
+// screen lists seating plan files from, and that Export/+New Seating Plan save into.
+let homeDirHandle = null;
+let showingHome = false;
 // the visible viewBox, recomputed to fit content on every full render() so the room can
 // grow (or shrink back) without limit while the app zooms to keep everything in frame
 let currentViewBox = { x:0, y:0, w:BASE_ROOM_W, h:BASE_ROOM_H };
@@ -1688,6 +1727,7 @@ function syncRoomSizeInputs(cls){
 
 function render(){
   const cls = getClass();
+  document.getElementById('homeBtn').style.display = homeDirHandle ? '' : 'none';
   renderClassTabs();
   document.getElementById('mainArea').style.display = cls ? '' : 'none';
   document.getElementById('emptyState').style.display = cls ? 'none' : '';
@@ -2366,12 +2406,34 @@ document.getElementById('presentEditModeBtn').onclick = () => {
   else showLock();
 };
 
-document.getElementById('exportBtn').onclick = () => {
+document.getElementById('exportBtn').onclick = async () => {
   const cls = getClass();
+  const suggested = linkedFileHandle ? linkedFileHandle.name.replace(/\.json$/i, '') : (cls ? cls.name : 'seating-plan');
+  // With a home folder set up, save straight into it under a chosen name (just a filename
+  // prompt, no separate save dialog) — the file becomes the active auto-saving one and shows
+  // up on the launch screen from then on. Without a home folder, fall back to a plain browser
+  // download so Export still works without the newer folder-based workflow.
+  if(homeDirHandle && await verifyReadWritePermission(homeDirHandle)){
+    const name = prompt('Save as filename:', suggested);
+    if(!name || !name.trim()) return;
+    const filename = name.trim().replace(/\.json$/i, '') + '.json';
+    try{
+      const handle = await homeDirHandle.getFileHandle(filename, { create: true });
+      const writable = await handle.createWritable();
+      await writable.write(JSON.stringify(db, null, 2));
+      await writable.close();
+      linkedFileHandle = handle;
+      updateLinkedFileUI(filename);
+      alert(`Saved "${filename}" to your seating plan folder.`);
+    }catch(err){
+      alert('Could not save: ' + err.message);
+    }
+    return;
+  }
   const blob = new Blob([JSON.stringify(db, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `${(cls ? cls.name : 'seating-plan')} template.json`;
+  a.download = `${suggested} template.json`;
   a.click();
 };
 
@@ -2517,51 +2579,11 @@ function updateLinkedFileUI(name){
     hint.style.display = '';
     hint.textContent = `📄 ${name} (auto-saving)`;
     unlinkBtn.style.display = '';
-    document.getElementById('reconnectFileBtn').style.display = 'none';
+    unlinkBtn.textContent = homeDirHandle ? 'Close' : 'Disconnect';
   } else {
     hint.style.display = 'none';
     unlinkBtn.style.display = 'none';
   }
-}
-
-// ---------- remembering the linked file across browser sessions ----------
-// A FileSystemFileHandle only lives in memory by default, so reopening the page would
-// normally mean re-picking the file every single time. IndexedDB can store the handle itself
-// (it's structured-cloneable) so the next launch can look it up — but browsers still refuse to
-// silently re-grant read/write permission without a user gesture, so reconnecting on load only
-// succeeds without a click if the browser still considers permission already granted
-// (queryPermission never prompts); otherwise a "Reconnect" button appears instead.
-const FILE_HANDLE_DB = 'seatingPlanGeneratorFiles', FILE_HANDLE_STORE = 'handles', FILE_HANDLE_KEY = 'linkedFile';
-function openHandleDB(){
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(FILE_HANDLE_DB, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(FILE_HANDLE_STORE);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-async function saveHandleToDB(handle){
-  const idb = await openHandleDB();
-  return new Promise((resolve, reject) => {
-    const tx = idb.transaction(FILE_HANDLE_STORE, 'readwrite');
-    tx.objectStore(FILE_HANDLE_STORE).put(handle, FILE_HANDLE_KEY);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-async function loadHandleFromDB(){
-  const idb = await openHandleDB();
-  return new Promise((resolve, reject) => {
-    const req = idb.transaction(FILE_HANDLE_STORE, 'readonly').objectStore(FILE_HANDLE_STORE).get(FILE_HANDLE_KEY);
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => reject(req.error);
-  });
-}
-async function clearHandleFromDB(){
-  try{
-    const idb = await openHandleDB();
-    idb.transaction(FILE_HANDLE_STORE, 'readwrite').objectStore(FILE_HANDLE_STORE).delete(FILE_HANDLE_KEY);
-  }catch(err){ /* nothing to clear */ }
 }
 async function loadLinkedFileInto(handle){
   const file = await handle.getFile();
@@ -2572,6 +2594,8 @@ async function loadLinkedFileInto(handle){
   linkedFileHandle = handle;
   updateLinkedFileUI(file.name);
 }
+// Secondary escape hatch for opening a file from outside the home folder (e.g. one someone
+// emailed you). Doesn't participate in the home-folder launch screen or its persistence.
 async function openLinkedFile(){
   try{
     const [handle] = await window.showOpenFilePicker({
@@ -2580,87 +2604,200 @@ async function openLinkedFile(){
     const canWrite = await verifyReadWritePermission(handle);
     await loadLinkedFileInto(handle);
     if(!canWrite){ linkedFileHandle = null; updateLinkedFileUI(); }
-    if(!canWrite) alert('Opened the file, but write permission was declined — changes will only be saved in the browser. Use Export JSON to save a copy.');
-    else saveHandleToDB(handle).catch(()=>{});
-    saveDB(); render();
+    if(!canWrite) alert('Opened the file, but write permission was declined — changes will only be saved in the browser. Use Export to save a copy.');
+    showingHome = false;
+    saveDB(); renderPage();
     if(getClass()) openPresent();
   }catch(err){
     if(err.name !== 'AbortError') alert('Could not open file: ' + err.message);
   }
 }
-async function createLinkedFile(){
-  // Reachable from the header at any time, not just the empty-state prompt — guard against
-  // silently wiping whatever classes are currently open.
-  if(db.classes.length && !confirm('Start a brand new, empty seating plan file? Your current classes will stay saved in this browser (and in any file already linked), but will no longer be the active file.')) return;
+document.getElementById('unlinkFileBtn').onclick = () => {
+  linkedFileHandle = null;
+  updateLinkedFileUI();
+  if(homeDirHandle) goHome(); else render();
+};
+
+// ---------- home folder: a launch screen listing seating plan files, remembered across
+// browser sessions ----------
+// A FileSystemDirectoryHandle only lives in memory by default, so reopening the page would
+// normally mean re-picking the folder every time. IndexedDB can store the handle itself (it's
+// structured-cloneable) so the next launch can look it up — but browsers still refuse to
+// silently re-grant read/write permission without a user gesture, so reconnecting on load only
+// succeeds without a click if the browser still considers permission already granted
+// (queryPermission never prompts); otherwise the launch screen offers a "Reconnect" button.
+const HANDLE_DB = 'seatingPlanGeneratorFiles', HANDLE_STORE = 'handles';
+const DIR_HANDLE_KEY = 'homeDir';
+function openHandleDB(){
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(HANDLE_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(HANDLE_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function saveHandleToDB(key, handle){
+  const idb = await openHandleDB();
+  return new Promise((resolve, reject) => {
+    const tx = idb.transaction(HANDLE_STORE, 'readwrite');
+    tx.objectStore(HANDLE_STORE).put(handle, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function loadHandleFromDB(key){
+  const idb = await openHandleDB();
+  return new Promise((resolve, reject) => {
+    const req = idb.transaction(HANDLE_STORE, 'readonly').objectStore(HANDLE_STORE).get(key);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function clearHandleFromDB(key){
   try{
-    const handle = await window.showSaveFilePicker({
-      suggestedName: 'seating-plan.json',
-      types: [{ description: 'Seating plan JSON', accept: {'application/json': ['.json']} }],
-    });
-    const canWrite = await verifyReadWritePermission(handle);
-    if(!canWrite) throw new Error('Write permission was declined.');
+    const idb = await openHandleDB();
+    idb.transaction(HANDLE_STORE, 'readwrite').objectStore(HANDLE_STORE).delete(key);
+  }catch(err){ /* nothing to clear */ }
+}
+
+function goHome(){
+  showingHome = true;
+  renderPage();
+}
+document.getElementById('homeBtn').onclick = goHome;
+
+async function chooseHomeFolder(){
+  try{
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    const ok = await verifyReadWritePermission(handle);
+    if(!ok) throw new Error('Permission was not granted.');
+    homeDirHandle = handle;
+    saveHandleToDB(DIR_HANDLE_KEY, handle).catch(()=>{});
+    renderPage();
+  }catch(err){
+    if(err.name !== 'AbortError') alert('Could not use that folder: ' + err.message);
+  }
+}
+async function listHomeFiles(){
+  const files = [];
+  for await (const [name, handle] of homeDirHandle.entries()){
+    if(handle.kind === 'file' && name.toLowerCase().endsWith('.json')) files.push(name);
+  }
+  files.sort((a,b) => a.localeCompare(b));
+  return files;
+}
+async function openHomeFile(name){
+  try{
+    const handle = await homeDirHandle.getFileHandle(name);
+    await loadLinkedFileInto(handle);
+    showingHome = false;
+    saveDB(); renderPage();
+    if(getClass()) openPresent();
+  }catch(err){
+    alert(`Could not open "${name}": ` + err.message);
+  }
+}
+async function createNewPlanInFolder(){
+  const name = prompt('Name for the new seating plan file:', '');
+  if(!name || !name.trim()) return;
+  const filename = name.trim().replace(/\.json$/i, '') + '.json';
+  try{
+    let exists = true;
+    try{ await homeDirHandle.getFileHandle(filename); }catch(err){ exists = false; }
+    if(exists){ openHomeFile(filename); return; }
+    const handle = await homeDirHandle.getFileHandle(filename, { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(JSON.stringify({ classes: [] }, null, 2));
+    await writable.close();
     db = { classes: [] };
     currentClassId = null;
     linkedFileHandle = handle;
-    updateLinkedFileUI(handle.name);
-    saveHandleToDB(handle).catch(()=>{});
-    saveDB(); render();
+    updateLinkedFileUI(filename);
+    showingHome = false;
+    saveDB(); renderPage();
   }catch(err){
-    if(err.name !== 'AbortError') alert('Could not create file: ' + err.message);
+    alert('Could not create file: ' + err.message);
   }
 }
-async function tryReconnectLinkedFile(){
-  let handle;
-  try{ handle = await loadHandleFromDB(); }catch(err){ return; }
-  if(!handle) return;
-  try{
-    if((await handle.queryPermission({ mode: 'readwrite' })) === 'granted'){
-      await loadLinkedFileInto(handle);
-      saveDB(); render();
-      if(getClass()) openPresent();
-    } else {
-      // Permission needs a user gesture to re-request — offer a one-click reconnect instead
-      // of silently failing or prompting unexpectedly.
-      pendingReconnectHandle = handle;
-      const btn = document.getElementById('reconnectFileBtn');
-      btn.textContent = `🔄 Reconnect to ${handle.name}`;
-      btn.style.display = '';
-    }
-  }catch(err){
-    // Handle may be stale (file moved, deleted, or permission revoked) — ignore quietly and
-    // fall back to whatever's in localStorage, same as a normal first launch.
+async function renderHome(){
+  document.getElementById('homeScreen').style.display = '';
+  document.getElementById('appHeader').style.display = 'none';
+  document.getElementById('mainArea').style.display = 'none';
+  document.getElementById('emptyState').style.display = 'none';
+  document.querySelector('footer').style.display = 'none';
+
+  const noFolderEl = document.getElementById('homeNoFolder');
+  const reconnectEl = document.getElementById('homeReconnect');
+  const listEl = document.getElementById('homeFileList');
+  noFolderEl.style.display = 'none'; reconnectEl.style.display = 'none'; listEl.style.display = 'none';
+
+  if(!homeDirHandle){ noFolderEl.style.display = ''; return; }
+
+  let granted;
+  try{ granted = (await homeDirHandle.queryPermission({ mode: 'readwrite' })) === 'granted'; }
+  catch(err){ granted = false; }
+  if(!granted){
+    reconnectEl.style.display = '';
+    document.getElementById('reconnectFolderBtn').textContent = `🔄 Reconnect to "${homeDirHandle.name}"`;
+    return;
+  }
+
+  listEl.style.display = '';
+  document.getElementById('homeFolderName').textContent = `📁 ${homeDirHandle.name}`;
+  let files;
+  try{ files = await listHomeFiles(); }catch(err){ files = []; }
+  const ul = document.getElementById('homeFiles');
+  ul.innerHTML = '';
+  if(!files.length){
+    const li = document.createElement('li');
+    li.className = 'hint';
+    li.textContent = 'No seating plan files here yet — click "+ New Seating Plan" to create one.';
+    ul.appendChild(li);
+  }
+  for(const name of files){
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.textContent = `📄 ${name.replace(/\.json$/i, '')}`;
+    btn.onclick = () => openHomeFile(name);
+    li.appendChild(btn);
+    ul.appendChild(li);
   }
 }
-let pendingReconnectHandle = null;
-document.getElementById('reconnectFileBtn').onclick = async () => {
-  if(!pendingReconnectHandle) return;
+document.getElementById('chooseFolderBtn').onclick = chooseHomeFolder;
+document.getElementById('changeFolderBtn').onclick = chooseHomeFolder;
+document.getElementById('newPlanBtn').onclick = createNewPlanInFolder;
+document.getElementById('skipFolderLink').onclick = (e) => {
+  e.preventDefault();
+  showingHome = false;
+  renderPage();
+  if(getClass()) openPresent();
+  else if(!isUnlocked()) showLock();
+};
+document.getElementById('changeFolderLink2').onclick = (e) => { e.preventDefault(); chooseHomeFolder(); };
+document.getElementById('reconnectFolderBtn').onclick = async () => {
+  if(!homeDirHandle) return;
   try{
-    const canWrite = await verifyReadWritePermission(pendingReconnectHandle);
-    if(!canWrite){ alert('Permission was not granted.'); return; }
-    await loadLinkedFileInto(pendingReconnectHandle);
-    pendingReconnectHandle = null;
-    saveDB(); render();
-    if(getClass()) openPresent();
+    const ok = await verifyReadWritePermission(homeDirHandle);
+    if(!ok){ alert('Permission was not granted.'); return; }
+    renderPage();
   }catch(err){
     alert('Could not reconnect: ' + err.message);
   }
 };
-if('showOpenFilePicker' in window && 'showSaveFilePicker' in window){
+
+// The top-level "which screen" dispatcher — Home (launch screen) or the normal app view.
+function renderPage(){
+  if(showingHome){ renderHome(); return; }
+  document.getElementById('homeScreen').style.display = 'none';
+  document.getElementById('appHeader').style.display = '';
+  document.querySelector('footer').style.display = '';
+  render();
+}
+
+if('showOpenFilePicker' in window && 'showDirectoryPicker' in window){
   document.getElementById('openFileBtn').style.display = '';
   document.getElementById('openFileBtn').onclick = openLinkedFile;
-  document.getElementById('createFileBtn').style.display = '';
-  document.getElementById('createFileBtn').onclick = createLinkedFile;
-  document.getElementById('emptyCreateFileHint').style.display = '';
-  document.getElementById('emptyCreateFileBtn').onclick = createLinkedFile;
-  tryReconnectLinkedFile();
 }
-document.getElementById('unlinkFileBtn').onclick = () => {
-  linkedFileHandle = null;
-  pendingReconnectHandle = null;
-  document.getElementById('reconnectFileBtn').style.display = 'none';
-  updateLinkedFileUI();
-  clearHandleFromDB();
-};
 
 // ---------- teacher-mode PIN lock ----------
 const TEACHER_PIN = '5157';
@@ -2699,10 +2836,34 @@ document.getElementById('lockBtn').onclick = () => {
 // building, roster, proximity rules) is reached from Present's own "Edit Mode" button and is
 // the only thing gated behind the teacher PIN. The empty-class bootstrap case still needs the
 // PIN, since there's no seating plan yet to present.
+function bootIntoApp(){
+  render();
+  if(getClass()) openPresent();
+  else if(!isUnlocked()) showLock();
+}
 hideLock();
-render();
-if(getClass()) openPresent();
-else if(!isUnlocked()) showLock();
+if('showOpenFilePicker' in window && 'showDirectoryPicker' in window){
+  loadHandleFromDB(DIR_HANDLE_KEY).then((handle) => {
+    homeDirHandle = handle;
+    if(homeDirHandle){
+      // A home folder is remembered — always land on the launch screen so opening a specific
+      // file is a deliberate choice, not a silent reuse of whatever was open last time.
+      showingHome = true;
+      renderPage();
+    } else if(db.classes.length){
+      // Existing classes already saved in this browser from before the home-folder feature
+      // existed — don't interrupt that workflow with an unexpected setup screen.
+      bootIntoApp();
+    } else {
+      // Brand new install: offer to set up a folder, or skip straight into the old flow.
+      showingHome = true;
+      renderPage();
+    }
+  }).catch(() => bootIntoApp());
+} else {
+  // No File System Access support in this browser (e.g. Firefox/Safari) — unchanged behavior.
+  bootIntoApp();
+}
 })();
 </script>
 </body>
