@@ -161,8 +161,10 @@
       <button id="exportBtn">Export JSON</button>
       <button id="importBtn">Import JSON</button>
       <input type="file" id="importFile" accept="application/json" style="display:none;">
+      <button id="createFileBtn" style="display:none;">📄 New Seating Plan File…</button>
       <button id="openFileBtn" style="display:none;">📂 Open &amp; Auto-Save File…</button>
       <span class="hint" id="linkedFileHint" style="display:none;"></span>
+      <button id="reconnectFileBtn" class="small" style="display:none;"></button>
       <button id="unlinkFileBtn" class="small" style="display:none;">Disconnect</button>
       <button id="lockBtn">🔒 Lock</button>
     </div>
@@ -173,6 +175,11 @@
   <div class="empty-card">
     <h2>No classes yet</h2>
     <p>Click "+ Add Class" above to create your first class.</p>
+    <p id="emptyCreateFileHint" style="display:none;margin-top:14px;">
+      or <button id="emptyCreateFileBtn">📄 Create New Seating Plan File…</button>
+      — save it to a folder like OneDrive and this browser will auto-save to it and
+      reopen it automatically next time.
+    </p>
   </div>
 </div>
 <div class="main" id="mainArea">
@@ -2510,10 +2517,60 @@ function updateLinkedFileUI(name){
     hint.style.display = '';
     hint.textContent = `📄 ${name} (auto-saving)`;
     unlinkBtn.style.display = '';
+    document.getElementById('reconnectFileBtn').style.display = 'none';
   } else {
     hint.style.display = 'none';
     unlinkBtn.style.display = 'none';
   }
+}
+
+// ---------- remembering the linked file across browser sessions ----------
+// A FileSystemFileHandle only lives in memory by default, so reopening the page would
+// normally mean re-picking the file every single time. IndexedDB can store the handle itself
+// (it's structured-cloneable) so the next launch can look it up — but browsers still refuse to
+// silently re-grant read/write permission without a user gesture, so reconnecting on load only
+// succeeds without a click if the browser still considers permission already granted
+// (queryPermission never prompts); otherwise a "Reconnect" button appears instead.
+const FILE_HANDLE_DB = 'seatingPlanGeneratorFiles', FILE_HANDLE_STORE = 'handles', FILE_HANDLE_KEY = 'linkedFile';
+function openHandleDB(){
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(FILE_HANDLE_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(FILE_HANDLE_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function saveHandleToDB(handle){
+  const idb = await openHandleDB();
+  return new Promise((resolve, reject) => {
+    const tx = idb.transaction(FILE_HANDLE_STORE, 'readwrite');
+    tx.objectStore(FILE_HANDLE_STORE).put(handle, FILE_HANDLE_KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function loadHandleFromDB(){
+  const idb = await openHandleDB();
+  return new Promise((resolve, reject) => {
+    const req = idb.transaction(FILE_HANDLE_STORE, 'readonly').objectStore(FILE_HANDLE_STORE).get(FILE_HANDLE_KEY);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function clearHandleFromDB(){
+  try{
+    const idb = await openHandleDB();
+    idb.transaction(FILE_HANDLE_STORE, 'readwrite').objectStore(FILE_HANDLE_STORE).delete(FILE_HANDLE_KEY);
+  }catch(err){ /* nothing to clear */ }
+}
+async function loadLinkedFileInto(handle){
+  const file = await handle.getFile();
+  const parsed = JSON.parse(await file.text());
+  if(!parsed || !Array.isArray(parsed.classes)) throw new Error('Invalid file — expected a seating plan JSON export.');
+  db = parsed;
+  currentClassId = db.classes[0] ? db.classes[0].id : null;
+  linkedFileHandle = handle;
+  updateLinkedFileUI(file.name);
 }
 async function openLinkedFile(){
   try{
@@ -2521,27 +2578,88 @@ async function openLinkedFile(){
       types: [{ description: 'Seating plan JSON', accept: {'application/json': ['.json']} }],
     });
     const canWrite = await verifyReadWritePermission(handle);
-    const file = await handle.getFile();
-    const parsed = JSON.parse(await file.text());
-    if(!parsed || !Array.isArray(parsed.classes)) throw new Error('Invalid file — expected a seating plan JSON export.');
-    db = parsed;
-    currentClassId = db.classes[0] ? db.classes[0].id : null;
-    linkedFileHandle = canWrite ? handle : null;
-    updateLinkedFileUI(file.name);
+    await loadLinkedFileInto(handle);
+    if(!canWrite){ linkedFileHandle = null; updateLinkedFileUI(); }
     if(!canWrite) alert('Opened the file, but write permission was declined — changes will only be saved in the browser. Use Export JSON to save a copy.');
+    else saveHandleToDB(handle).catch(()=>{});
     saveDB(); render();
     if(getClass()) openPresent();
   }catch(err){
     if(err.name !== 'AbortError') alert('Could not open file: ' + err.message);
   }
 }
-if('showOpenFilePicker' in window){
+async function createLinkedFile(){
+  // Reachable from the header at any time, not just the empty-state prompt — guard against
+  // silently wiping whatever classes are currently open.
+  if(db.classes.length && !confirm('Start a brand new, empty seating plan file? Your current classes will stay saved in this browser (and in any file already linked), but will no longer be the active file.')) return;
+  try{
+    const handle = await window.showSaveFilePicker({
+      suggestedName: 'seating-plan.json',
+      types: [{ description: 'Seating plan JSON', accept: {'application/json': ['.json']} }],
+    });
+    const canWrite = await verifyReadWritePermission(handle);
+    if(!canWrite) throw new Error('Write permission was declined.');
+    db = { classes: [] };
+    currentClassId = null;
+    linkedFileHandle = handle;
+    updateLinkedFileUI(handle.name);
+    saveHandleToDB(handle).catch(()=>{});
+    saveDB(); render();
+  }catch(err){
+    if(err.name !== 'AbortError') alert('Could not create file: ' + err.message);
+  }
+}
+async function tryReconnectLinkedFile(){
+  let handle;
+  try{ handle = await loadHandleFromDB(); }catch(err){ return; }
+  if(!handle) return;
+  try{
+    if((await handle.queryPermission({ mode: 'readwrite' })) === 'granted'){
+      await loadLinkedFileInto(handle);
+      saveDB(); render();
+      if(getClass()) openPresent();
+    } else {
+      // Permission needs a user gesture to re-request — offer a one-click reconnect instead
+      // of silently failing or prompting unexpectedly.
+      pendingReconnectHandle = handle;
+      const btn = document.getElementById('reconnectFileBtn');
+      btn.textContent = `🔄 Reconnect to ${handle.name}`;
+      btn.style.display = '';
+    }
+  }catch(err){
+    // Handle may be stale (file moved, deleted, or permission revoked) — ignore quietly and
+    // fall back to whatever's in localStorage, same as a normal first launch.
+  }
+}
+let pendingReconnectHandle = null;
+document.getElementById('reconnectFileBtn').onclick = async () => {
+  if(!pendingReconnectHandle) return;
+  try{
+    const canWrite = await verifyReadWritePermission(pendingReconnectHandle);
+    if(!canWrite){ alert('Permission was not granted.'); return; }
+    await loadLinkedFileInto(pendingReconnectHandle);
+    pendingReconnectHandle = null;
+    saveDB(); render();
+    if(getClass()) openPresent();
+  }catch(err){
+    alert('Could not reconnect: ' + err.message);
+  }
+};
+if('showOpenFilePicker' in window && 'showSaveFilePicker' in window){
   document.getElementById('openFileBtn').style.display = '';
   document.getElementById('openFileBtn').onclick = openLinkedFile;
+  document.getElementById('createFileBtn').style.display = '';
+  document.getElementById('createFileBtn').onclick = createLinkedFile;
+  document.getElementById('emptyCreateFileHint').style.display = '';
+  document.getElementById('emptyCreateFileBtn').onclick = createLinkedFile;
+  tryReconnectLinkedFile();
 }
 document.getElementById('unlinkFileBtn').onclick = () => {
   linkedFileHandle = null;
+  pendingReconnectHandle = null;
+  document.getElementById('reconnectFileBtn').style.display = 'none';
   updateLinkedFileUI();
+  clearHandleFromDB();
 };
 
 // ---------- teacher-mode PIN lock ----------
