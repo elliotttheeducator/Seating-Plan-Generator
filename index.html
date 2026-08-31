@@ -206,6 +206,9 @@
         </span>
       </div>
       <ul class="filelist" id="homeFiles"></ul>
+      <p class="hint" id="backToCurrentHint" style="display:none;margin-top:10px;">
+        <a href="#" id="backToCurrentLink">← Back to the plan you had open</a> — use Export to save it into this folder.
+      </p>
     </div>
   </div>
 </div>
@@ -1727,7 +1730,11 @@ function syncRoomSizeInputs(cls){
 
 function render(){
   const cls = getClass();
-  document.getElementById('homeBtn').style.display = homeDirHandle ? '' : 'none';
+  // Always reachable (not just once a folder is already set) — otherwise anyone who already
+  // had classes saved before this feature existed has no way to ever discover or set one up,
+  // since the launch screen only appears automatically for a genuinely fresh install.
+  document.getElementById('homeBtn').style.display = ('showDirectoryPicker' in window) ? '' : 'none';
+  document.getElementById('homeBtn').textContent = homeDirHandle ? '🏠 Home' : '📁 Set Up Folder…';
   renderClassTabs();
   document.getElementById('mainArea').style.display = cls ? '' : 'none';
   document.getElementById('emptyState').style.display = cls ? 'none' : '';
@@ -2744,6 +2751,10 @@ async function renderHome(){
 
   listEl.style.display = '';
   document.getElementById('homeFolderName').textContent = `📁 ${homeDirHandle.name}`;
+  // If there's work sitting in memory that isn't tied to any file yet (e.g. classes saved to
+  // this browser before a folder was ever set up), offer a way back to it instead of stranding
+  // it behind the file list with no visible path back.
+  document.getElementById('backToCurrentHint').style.display = (!linkedFileHandle && db.classes.length) ? '' : 'none';
   let files;
   try{ files = await listHomeFiles(); }catch(err){ files = []; }
   const ul = document.getElementById('homeFiles');
@@ -2774,6 +2785,12 @@ document.getElementById('skipFolderLink').onclick = (e) => {
   else if(!isUnlocked()) showLock();
 };
 document.getElementById('changeFolderLink2').onclick = (e) => { e.preventDefault(); chooseHomeFolder(); };
+document.getElementById('backToCurrentLink').onclick = (e) => {
+  e.preventDefault();
+  showingHome = false;
+  renderPage();
+  if(getClass()) openPresent();
+};
 document.getElementById('reconnectFolderBtn').onclick = async () => {
   if(!homeDirHandle) return;
   try{
