@@ -417,13 +417,36 @@
       </div>
       <div class="panel" style="margin-top:12px;">
         <h2>Friend Groups</h2>
-        <div class="hint">For a bigger friendship group — sitting next to one of them is still totally fine, this just stops the whole group clumping into one corner of the room. Different from Proximity Rules (which govern who sits directly next to whom).</div>
+        <div class="hint">
+          <strong>Avoid Clustering</strong> — sitting next to one of them is still totally fine, this
+          just stops the whole group clumping into one corner of the room.
+          <strong>Category Group</strong> — doesn't affect seating on its own; tag two of these and
+          pick them below under Alternate Seating to mix them at every table instead. Different from
+          Proximity Rules (which govern who sits directly next to whom).
+        </div>
         <div class="row wrap" style="margin-top:8px;">
           <input type="text" id="groupNameInput" placeholder="Group name" style="flex:1;min-width:140px;">
+          <select id="groupKindInput" style="flex:0 0 auto;">
+            <option value="avoid">Avoid Clustering</option>
+            <option value="category">Category Group</option>
+          </select>
         </div>
         <ul class="studentlist" id="groupMemberChecklist" style="max-height:180px;overflow-y:auto;margin-top:6px;border:1px solid var(--border);border-radius:6px;padding:4px;"></ul>
         <button id="addGroupBtn" class="primary" style="width:100%;margin-top:8px;">+ Add Group</button>
         <ul class="rel-list" id="groupList" style="margin-top:10px;"></ul>
+      </div>
+      <div class="panel" style="margin-top:12px;">
+        <h2>Alternate Seating</h2>
+        <div class="hint">Pick two Category Groups (e.g. two reading levels, or two cliques) and every table will mix them in an alternating pattern, instead of letting either one take over a whole table.</div>
+        <label class="hint" style="display:flex;align-items:center;gap:6px;margin-top:8px;">
+          <input type="checkbox" id="alternateEnabledInput"> Alternate between two groups
+        </label>
+        <div class="row wrap" id="alternateGroupSelectRow" style="margin-top:8px;display:none;">
+          <select id="alternateGroupASelect" style="flex:1;min-width:120px;"></select>
+          <span class="hint">alternate with</span>
+          <select id="alternateGroupBSelect" style="flex:1;min-width:120px;"></select>
+        </div>
+        <div class="hint" id="alternateNeedsCategoryHint" style="display:none;margin-top:6px;">Create at least 2 Category Groups above first.</div>
       </div>
     </div>
   </div>
@@ -448,6 +471,11 @@ const CLUSTER_WEIGHT = 14;
 // than a totally random never-paired stranger, and Generate quietly breaks up a pairing the
 // teacher explicitly set up in favor of "freshness."
 const GREEN_BONUS = -20;
+// Alternate Seating: rewards seating the two chosen Category Groups next to each other and
+// penalizes two members of the SAME chosen group sitting next to each other, which — applied to
+// every neighbor pair the normal placement loop already checks — produces an alternating A/B/A/B
+// pattern at each table without needing a separate placement pass.
+const ALTERNATE_SAME_PENALTY = 15, ALTERNATE_OPPOSITE_BONUS = -15;
 const DOOR_LEN = 85;
 const BASE_ROOM_W = 1000, BASE_ROOM_H = 700; // default 10m x 7m
 const DEFAULT_THEME = { floorMode: 'texture', floorColor: '#c7cdd6', tableMode: 'texture', tableColor: '#f6f4ef' };
@@ -622,7 +650,26 @@ function relKey(a,b){ return [a,b].sort().join('|'); }
 // up seated in the same corner of the room. Distinct from red/yellow (which govern immediate
 // adjacency) and green/history (which govern who partners with whom).
 function groupsContaining(cls, studentId){
-  return (cls.groups || []).filter(g => g.studentIds.includes(studentId));
+  // Category groups (g.kind === 'category') opt out of the ordinary dispersion penalty below —
+  // their only effect on seating is the explicit Alternate Seating mix (see
+  // alternateGroupPenalty), not the general "don't all clump together" behavior.
+  return (cls.groups || []).filter(g => g.kind !== 'category' && g.studentIds.includes(studentId));
+}
+// Alternate Seating: looks up whether a and b belong to the two groups picked in
+// cls.alternateSeating, and returns the resulting neighbor-adjacency bonus/penalty (see the
+// ALTERNATE_* constants) — 0 if Alternate Seating isn't enabled or neither student is in either
+// chosen group.
+function alternateGroupPenalty(cls, aId, bId){
+  const alt = cls.alternateSeating;
+  if(!alt || !alt.enabled || !alt.groupAId || !alt.groupBId) return 0;
+  const gA = (cls.groups || []).find(g => g.id === alt.groupAId);
+  const gB = (cls.groups || []).find(g => g.id === alt.groupBId);
+  if(!gA || !gB) return 0;
+  const aInA = gA.studentIds.includes(aId), aInB = gB.studentIds.includes(aId);
+  const bInA = gA.studentIds.includes(bId), bInB = gB.studentIds.includes(bId);
+  if((aInA && bInA) || (aInB && bInB)) return ALTERNATE_SAME_PENALTY;
+  if((aInA && bInB) || (aInB && bInA)) return ALTERNATE_OPPOSITE_BONUS;
+  return 0;
 }
 // How many already-placed students within CLUSTER_RADIUS of (x,y) share a friend group with
 // this student — used as an escalating penalty so a 2nd/3rd nearby group-mate costs more than
@@ -1039,6 +1086,7 @@ function generateGroupSeating(cls){
           else if(rel === 'yellow') penalty += 5;
           else if(rel === 'green') penalty += GREEN_BONUS;
           penalty += pairHistoryCount(cls, stu.id, nbStu) * 8;
+          penalty += alternateGroupPenalty(cls, stu.id, nbStu);
         }
         const seat = seatsById[seatId];
         penalty += clusterPenalty(cls, stu.id, seat.x, seat.y, assign, seatsById) * CLUSTER_WEIGHT;
@@ -1086,7 +1134,8 @@ function generatePairSeating(cls){
       for(let i=0;i<pool.length;i++){
         const rel = cls.relationships[relKey(a.id, pool[i].id)];
         const pen = (rel==='red' ? 1000 : rel==='yellow' ? 5 : rel==='green' ? GREEN_BONUS : 0)
-          + pairHistoryCount(cls, a.id, pool[i].id) * 8;
+          + pairHistoryCount(cls, a.id, pool[i].id) * 8
+          + alternateGroupPenalty(cls, a.id, pool[i].id);
         if(pen < bestPen){ bestPen = pen; ties = [i]; }
         else if(pen === bestPen) ties.push(i);
       }
@@ -1444,14 +1493,48 @@ function renderGroups(cls){
   const byId = Object.fromEntries(cls.students.map(s=>[s.id,s.name]));
   for(const g of (cls.groups || [])){
     const names = g.studentIds.map(id => byId[id]).filter(Boolean);
+    const tag = g.kind === 'category' ? ' <span class="hint">(category)</span>' : '';
     const li = document.createElement('li');
-    li.innerHTML = `<span class="names"><strong>${escapeHtml(g.name)}</strong> — ${escapeHtml(names.join(', ') || 'no students')}</span>`;
+    li.innerHTML = `<span class="names"><strong>${escapeHtml(g.name)}</strong>${tag} — ${escapeHtml(names.join(', ') || 'no students')}</span>`;
     const del = document.createElement('button');
     del.className = 'small'; del.textContent = '✕';
     del.onclick = () => { cls.groups = cls.groups.filter(x=>x.id!==g.id); saveDB(); render(); };
     li.appendChild(del);
     groupList.appendChild(li);
   }
+
+  renderAlternateSeating(cls);
+}
+
+// Alternate Seating: lets the two dropdowns below only offer Category Groups (an "Avoid
+// Clustering" group can't be picked here — mixing groups you're also trying to disperse would
+// fight itself), and keeps cls.alternateSeating in sync with what's actually selectable now
+// (e.g. a chosen group getting deleted, or re-tagged away from "category").
+function renderAlternateSeating(cls){
+  const categoryGroups = (cls.groups || []).filter(g => g.kind === 'category');
+  const enabledInput = document.getElementById('alternateEnabledInput');
+  const selectRow = document.getElementById('alternateGroupSelectRow');
+  const needHint = document.getElementById('alternateNeedsCategoryHint');
+  const selA = document.getElementById('alternateGroupASelect');
+  const selB = document.getElementById('alternateGroupBSelect');
+
+  if(!cls.alternateSeating) cls.alternateSeating = { enabled: false, groupAId: null, groupBId: null };
+  const alt = cls.alternateSeating;
+  if(alt.groupAId && !categoryGroups.some(g=>g.id===alt.groupAId)) alt.groupAId = null;
+  if(alt.groupBId && !categoryGroups.some(g=>g.id===alt.groupBId)) alt.groupBId = null;
+  if(categoryGroups.length < 2) alt.enabled = false;
+
+  enabledInput.checked = alt.enabled;
+  enabledInput.disabled = categoryGroups.length < 2;
+  needHint.style.display = categoryGroups.length < 2 ? '' : 'none';
+  selectRow.style.display = alt.enabled ? '' : 'none';
+
+  const opts = categoryGroups.map(g => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('');
+  selA.innerHTML = opts; selB.innerHTML = opts;
+  if(!alt.groupAId && categoryGroups[0]) alt.groupAId = categoryGroups[0].id;
+  if(!alt.groupBId && categoryGroups.find(g=>g.id!==alt.groupAId)) alt.groupBId = categoryGroups.find(g=>g.id!==alt.groupAId).id;
+  selA.value = alt.groupAId || '';
+  selB.value = alt.groupBId || '';
 }
 
 function renderCanvas(cls){
@@ -1986,12 +2069,29 @@ document.getElementById('addGroupBtn').onclick = () => {
   const cls = getClass();
   const nameInput = document.getElementById('groupNameInput');
   const name = nameInput.value.trim();
+  const kind = document.getElementById('groupKindInput').value;
   const studentIds = Array.from(document.querySelectorAll('.group-member-checkbox:checked')).map(cb=>cb.value);
   if(!name){ alert('Give the group a name.'); return; }
   if(studentIds.length < 2){ alert('Tick at least 2 students for the group.'); return; }
   if(!cls.groups) cls.groups = [];
-  cls.groups.push({ id: uid(), name, studentIds });
+  cls.groups.push({ id: uid(), name, studentIds, kind });
   nameInput.value = '';
+  saveDB(); render();
+};
+document.getElementById('alternateEnabledInput').onchange = (e) => {
+  const cls = getClass();
+  if(!cls.alternateSeating) cls.alternateSeating = { enabled:false, groupAId:null, groupBId:null };
+  cls.alternateSeating.enabled = e.target.checked;
+  saveDB(); render();
+};
+document.getElementById('alternateGroupASelect').onchange = (e) => {
+  const cls = getClass();
+  cls.alternateSeating.groupAId = e.target.value || null;
+  saveDB(); render();
+};
+document.getElementById('alternateGroupBSelect').onchange = (e) => {
+  const cls = getClass();
+  cls.alternateSeating.groupBId = e.target.value || null;
   saveDB(); render();
 };
 
@@ -2559,7 +2659,7 @@ document.getElementById('importClassBtn').onclick = () => {
   for(const g of (source.groups || [])){
     const mapped = g.studentIds.map(id => idMap.get(id)).filter(Boolean);
     if(mapped.length < 2) continue; // not enough of this group actually came along
-    cls.groups.push({ id: uid(), name: g.name, studentIds: mapped });
+    cls.groups.push({ id: uid(), name: g.name, studentIds: mapped, kind: g.kind });
     groupsAdded++;
   }
 
