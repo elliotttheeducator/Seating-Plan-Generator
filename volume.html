@@ -1,0 +1,503 @@
+<title>Cross-Section × Depth</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+
+<style>
+:root{
+  --paper:#eceff2;
+  --card:#ffffff;
+  --sunk:#e2e7eb;
+  --ink:#16212b;
+  --ink-soft:#55636f;
+  --rule:#cfd8de;
+  --area:#0b7a75;
+  --area-tint:rgba(11,122,117,.16);
+  --depth:#a95f13;
+  --depth-tint:rgba(169,95,19,.14);
+  --vol:#4b3f9e;
+  --focus:#0b7a75;
+  --shadow:0 1px 2px rgba(22,33,43,.06), 0 8px 20px -14px rgba(22,33,43,.35);
+  --display:"Archivo","Helvetica Neue",Arial,sans-serif;
+  --body:"Source Serif 4",Georgia,"Times New Roman",serif;
+  --mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#11171c;
+    --card:#1a222a;
+    --sunk:#141b21;
+    --ink:#e7edf2;
+    --ink-soft:#95a4b1;
+    --rule:#2c3841;
+    --area:#4ec8bf;
+    --area-tint:rgba(78,200,191,.18);
+    --depth:#e2a45e;
+    --depth-tint:rgba(226,164,94,.16);
+    --vol:#a79bf5;
+    --focus:#4ec8bf;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 24px -16px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#11171c;
+  --card:#1a222a;
+  --sunk:#141b21;
+  --ink:#e7edf2;
+  --ink-soft:#95a4b1;
+  --rule:#2c3841;
+  --area:#4ec8bf;
+  --area-tint:rgba(78,200,191,.18);
+  --depth:#e2a45e;
+  --depth-tint:rgba(226,164,94,.16);
+  --vol:#a79bf5;
+  --focus:#4ec8bf;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 24px -16px rgba(0,0,0,.8);
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font-family:var(--body);
+  font-size:16px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1240px;margin:0 auto;padding:26px 22px 56px}
+
+/* ---------- masthead ---------- */
+.masthead{
+  border-bottom:2px solid var(--ink);
+  padding-bottom:14px;
+  margin-bottom:22px;
+  display:flex;flex-wrap:wrap;align-items:flex-end;gap:18px 28px;
+  justify-content:space-between;
+}
+.eyebrow{
+  font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-soft);margin:0 0 6px;
+}
+h1{
+  font-family:var(--display);font-weight:700;font-size:clamp(26px,3.4vw,38px);
+  letter-spacing:-.02em;margin:0;text-wrap:balance;line-height:1.05;
+}
+.lede{margin:8px 0 0;max-width:56ch;color:var(--ink-soft);font-size:15px}
+.masthead-eq{
+  font-family:var(--mono);font-size:clamp(15px,2vw,19px);font-weight:500;
+  white-space:nowrap;padding:10px 14px;border:1px solid var(--rule);
+  background:var(--card);border-radius:2px;
+}
+.masthead-eq .a{color:var(--area)}
+.masthead-eq .d{color:var(--depth)}
+.masthead-eq .v{color:var(--vol)}
+
+/* ---------- layout ---------- */
+.grid{display:grid;grid-template-columns:298px minmax(0,1fr);gap:26px;align-items:start}
+@media (max-width:880px){.grid{grid-template-columns:1fr}}
+
+/* ---------- control rail ---------- */
+.rail{position:sticky;top:18px;display:flex;flex-direction:column;gap:18px}
+@media (max-width:880px){.rail{position:static}}
+.block{background:var(--card);border:1px solid var(--rule);border-radius:3px;padding:15px 15px 17px;box-shadow:var(--shadow)}
+.block h2{
+  font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--ink-soft);margin:0 0 12px;
+}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{
+  font-family:var(--display);font-size:13px;font-weight:500;
+  padding:6px 11px;border:1px solid var(--rule);background:transparent;color:var(--ink-soft);
+  border-radius:999px;cursor:pointer;transition:background .12s,color .12s,border-color .12s;
+}
+.chip:hover{border-color:var(--area);color:var(--ink)}
+.chip[aria-pressed="true"]{background:var(--area);border-color:var(--area);color:#fff;font-weight:600}
+:root[data-theme="dark"] .chip[aria-pressed="true"],
+:root:not([data-theme="light"]) .chip[aria-pressed="true"]{color:#0d1519}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]) .chip[aria-pressed="true"]{color:#fff}}
+.chip:focus-visible,.slider:focus-visible,.toggle input:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+
+.depth-block{border-left:3px solid var(--depth)}
+.ctl{margin-top:2px}
+.ctl+.ctl{margin-top:13px}
+.ctl-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:3px}
+.ctl-name{font-family:var(--display);font-size:13px;font-weight:500}
+.ctl-val{font-family:var(--mono);font-size:13px;font-variant-numeric:tabular-nums;color:var(--ink-soft)}
+.depth-block .ctl-val{color:var(--depth);font-weight:600;font-size:15px}
+.slider{
+  -webkit-appearance:none;appearance:none;width:100%;height:22px;background:transparent;cursor:pointer;display:block;
+}
+.slider::-webkit-slider-runnable-track{height:4px;background:var(--sunk);border-radius:2px}
+.slider::-moz-range-track{height:4px;background:var(--sunk);border-radius:2px}
+.slider::-webkit-slider-thumb{
+  -webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:var(--ink);
+  border:3px solid var(--card);margin-top:-6px;box-shadow:0 0 0 1px var(--ink);
+}
+.slider::-moz-range-thumb{
+  width:15px;height:15px;border-radius:50%;background:var(--ink);
+  border:3px solid var(--card);box-shadow:0 0 0 1px var(--ink);
+}
+.depth-block .slider::-webkit-slider-thumb{background:var(--depth);box-shadow:0 0 0 1px var(--depth)}
+.depth-block .slider::-moz-range-thumb{background:var(--depth);box-shadow:0 0 0 1px var(--depth)}
+.params{border-top:1px solid var(--rule);padding-top:12px;margin-top:14px}
+.params.first{border-top:0;padding-top:0;margin-top:0}
+.params h3{font-family:var(--display);font-size:14px;font-weight:600;margin:0 0 6px}
+.toggle{display:flex;align-items:center;gap:8px;font-size:14px;margin-top:14px;cursor:pointer}
+.toggle input{accent-color:var(--area);width:15px;height:15px}
+.hint{font-size:13px;color:var(--ink-soft);margin:10px 0 0;line-height:1.4}
+
+/* ---------- panels ---------- */
+.panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(288px,1fr));gap:18px}
+.panel{background:var(--card);border:1px solid var(--rule);border-radius:3px;box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
+.panel-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:12px 15px 9px}
+.panel-head h3{font-family:var(--display);font-size:16px;font-weight:600;margin:0;letter-spacing:-.01em}
+.solid{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-soft);text-align:right}
+.stage{padding:0 8px;background:var(--card)}
+.stage svg{display:block;width:100%;height:auto}
+.dims{display:flex;flex-wrap:wrap;gap:5px;padding:4px 15px 12px}
+.dim{font-family:var(--mono);font-size:11px;padding:2px 7px;border:1px solid var(--rule);border-radius:999px;color:var(--ink-soft);font-variant-numeric:tabular-nums}
+.working{
+  border-top:1px solid var(--rule);background:var(--sunk);
+  font-family:var(--mono);font-size:12.5px;line-height:1.75;padding:11px 15px 13px;
+  font-variant-numeric:tabular-nums;margin-top:auto;
+}
+.working .row{display:block;white-space:nowrap;overflow-x:auto}
+.working .lbl{color:var(--ink-soft)}
+.a{color:var(--area);font-weight:600}
+.d{color:var(--depth);font-weight:600}
+.v{color:var(--vol);font-weight:600}
+.working .final{font-size:14px;padding-top:3px}
+
+.empty{
+  border:1px dashed var(--rule);border-radius:3px;padding:46px 20px;text-align:center;
+  color:var(--ink-soft);font-size:15px;
+}
+.totals{
+  margin-top:20px;padding-top:12px;border-top:1px solid var(--rule);
+  display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;
+  font-family:var(--mono);font-size:12.5px;color:var(--ink-soft);font-variant-numeric:tabular-nums;
+}
+footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--rule);color:var(--ink-soft);font-size:13.5px;max-width:70ch}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <div>
+      <p class="eyebrow">Prisms · Volume</p>
+      <h1>Cross-Section × Depth</h1>
+      <p class="lede">A prism is one flat face copied all the way through the solid. Work out the area of that face, multiply by how deep it goes, and you have the volume.</p>
+    </div>
+    <div class="masthead-eq"><span class="v">V</span> = <span class="a">A</span> × <span class="d">d</span></div>
+  </header>
+
+  <div class="grid">
+    <div class="rail">
+      <section class="block">
+        <h2>Cross-sections</h2>
+        <div class="chips" id="chips"></div>
+        <p class="hint">Pick as many as you like — they all share the same depth.</p>
+      </section>
+
+      <section class="block depth-block">
+        <h2>Shared depth</h2>
+        <div class="ctl">
+          <div class="ctl-top"><span class="ctl-name">Depth <em>d</em></span><span class="ctl-val" id="depth-val">4 cm</span></div>
+          <input class="slider" id="depth" type="range" min="0.5" max="14" step="0.5" value="4" aria-label="Depth in centimetres">
+        </div>
+        <label class="toggle"><input type="checkbox" id="slices" checked> Show 1 cm slices</label>
+      </section>
+
+      <section class="block" id="params-block">
+        <h2>Face dimensions</h2>
+        <div id="params"></div>
+      </section>
+    </div>
+
+    <main>
+      <div class="panels" id="panels"></div>
+      <div class="totals" id="totals"></div>
+      <footer>Every panel is drawn to the same scale, so a bigger picture really does mean a bigger solid. Lengths in centimetres, areas in cm², volumes in cm³. Answers are rounded to one decimal place; the diagrams use the exact values.</footer>
+    </main>
+  </div>
+</div>
+
+<script>
+const CIRC_PTS = 72;
+const nf = n => {
+  const r = Math.round(n * 10) / 10;
+  return (Math.abs(r - Math.round(r)) < 1e-9 ? String(Math.round(r)) : r.toFixed(1));
+};
+const nf2 = n => {
+  const r = Math.round(n * 100) / 100;
+  return (Math.abs(r - Math.round(r)) < 1e-9 ? String(Math.round(r)) : String(r));
+};
+const arc = (cx, cy, r, from, to, n) => {
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const t = from + (to - from) * (i / n);
+    pts.push([cx + r * Math.cos(t), cy + r * Math.sin(t)]);
+  }
+  return pts;
+};
+
+const SHAPES = {
+  rect: {
+    name: 'Rectangle', solid: 'Cuboid',
+    params: [
+      { k: 'w', label: 'width w', min: 1, max: 12, step: .5, val: 8 },
+      { k: 'h', label: 'height h', min: 1, max: 12, step: .5, val: 5 }
+    ],
+    norm: p => p,
+    area: p => p.w * p.h,
+    steps: p => [['A = w × h', ''], ['A = ' + nf(p.w) + ' × ' + nf(p.h), '']],
+    poly: p => [[0, 0], [p.w, 0], [p.w, p.h], [0, p.h]]
+  },
+  tri: {
+    name: 'Triangle', solid: 'Triangular prism',
+    params: [
+      { k: 'b', label: 'base b', min: 1, max: 12, step: .5, val: 7 },
+      { k: 'h', label: 'perp. height h', min: 1, max: 12, step: .5, val: 6 }
+    ],
+    norm: p => p,
+    area: p => p.b * p.h / 2,
+    steps: p => [['A = ½ × b × h', ''], ['A = ½ × ' + nf(p.b) + ' × ' + nf(p.h), '']],
+    poly: p => [[0, 0], [p.b, 0], [p.b * 0.32, p.h]]
+  },
+  para: {
+    name: 'Parallelogram', solid: 'Oblique prism',
+    params: [
+      { k: 'b', label: 'base b', min: 1, max: 12, step: .5, val: 7 },
+      { k: 'h', label: 'perp. height h', min: 1, max: 10, step: .5, val: 4.5 },
+      { k: 's', label: 'lean', min: 0, max: 5, step: .5, val: 2 }
+    ],
+    norm: p => p,
+    area: p => p.b * p.h,
+    steps: p => [['A = b × h', ''], ['A = ' + nf(p.b) + ' × ' + nf(p.h), 'the lean never changes it']],
+    poly: p => [[0, 0], [p.b, 0], [p.b + p.s, p.h], [p.s, p.h]]
+  },
+  trap: {
+    name: 'Trapezium', solid: 'Trapezoidal prism',
+    params: [
+      { k: 'a', label: 'top a', min: 1, max: 11, step: .5, val: 4 },
+      { k: 'b', label: 'bottom b', min: 1, max: 12, step: .5, val: 9 },
+      { k: 'h', label: 'height h', min: 1, max: 10, step: .5, val: 5 }
+    ],
+    norm: p => p,
+    area: p => (p.a + p.b) * p.h / 2,
+    steps: p => [['A = ½ × (a + b) × h', ''], ['A = ½ × (' + nf(p.a) + ' + ' + nf(p.b) + ') × ' + nf(p.h), '']],
+    poly: p => [[0, 0], [p.b, 0], [(p.b + p.a) / 2, p.h], [(p.b - p.a) / 2, p.h]]
+  },
+  circ: {
+    name: 'Circle', solid: 'Cylinder',
+    params: [{ k: 'r', label: 'radius r', min: .5, max: 6, step: .25, val: 3 }],
+    norm: p => p,
+    area: p => Math.PI * p.r * p.r,
+    steps: p => [['A = π × r²', ''], ['A = π × ' + nf2(p.r) + '²', '']],
+    poly: p => arc(p.r, p.r, p.r, 0, 2 * Math.PI, CIRC_PTS).slice(0, -1)
+  },
+  semi: {
+    name: 'Semicircle', solid: 'Half-cylinder',
+    params: [{ k: 'r', label: 'radius r', min: .5, max: 6, step: .25, val: 3.5 }],
+    norm: p => p,
+    area: p => Math.PI * p.r * p.r / 2,
+    steps: p => [['A = ½ × π × r²', ''], ['A = ½ × π × ' + nf2(p.r) + '²', '']],
+    poly: p => arc(p.r, 0, p.r, 0, Math.PI, CIRC_PTS / 2)
+  },
+  ell: {
+    name: 'L-shape', solid: 'L-shaped prism',
+    params: [
+      { k: 'w', label: 'width w', min: 2, max: 12, step: .5, val: 8 },
+      { k: 'h', label: 'height h', min: 2, max: 12, step: .5, val: 7 },
+      { k: 'cw', label: 'cut-out width', min: .5, max: 10, step: .5, val: 4 },
+      { k: 'ch', label: 'cut-out height', min: .5, max: 10, step: .5, val: 3.5 }
+    ],
+    norm: p => ({ w: p.w, h: p.h, cw: Math.min(p.cw, p.w - .5), ch: Math.min(p.ch, p.h - .5) }),
+    area: p => p.w * p.h - p.cw * p.ch,
+    steps: p => [
+      ['A = (w × h) − (cut-out)', ''],
+      ['A = (' + nf(p.w) + ' × ' + nf(p.h) + ') − (' + nf(p.cw) + ' × ' + nf(p.ch) + ')', '']
+    ],
+    poly: p => [[0, 0], [p.w, 0], [p.w, p.h - p.ch], [p.w - p.cw, p.h - p.ch], [p.w - p.cw, p.h], [0, p.h]]
+  }
+};
+const ORDER = ['rect', 'tri', 'para', 'trap', 'circ', 'semi', 'ell'];
+
+const state = { depth: 4, slices: true, selected: new Set(['rect', 'tri', 'circ']), params: {} };
+ORDER.forEach(k => { state.params[k] = {}; SHAPES[k].params.forEach(p => state.params[k][p.k] = p.val); });
+
+/* ---------- geometry ---------- */
+function ccw(poly) {
+  let s = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    s += a[0] * b[1] - b[0] * a[1];
+  }
+  return s < 0 ? poly.slice().reverse() : poly;
+}
+const W = 300, H = 196, PAD = 16;
+
+function geometry(key) {
+  const S = SHAPES[key];
+  const p = S.norm(state.params[key]);
+  const poly = ccw(S.poly(p));
+  const off = [state.depth * 0.52, state.depth * 0.40];
+  const back = poly.map(pt => [pt[0] + off[0], pt[1] + off[1]]);
+  const all = poly.concat(back);
+  const xs = all.map(q => q[0]), ys = all.map(q => q[1]);
+  const bb = { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+  return { S, p, poly, back, off, bb, area: S.area(p) };
+}
+
+function svgFor(g, scale) {
+  const cx = (g.bb.x0 + g.bb.x1) / 2, cy = (g.bb.y0 + g.bb.y1) / 2;
+  const X = x => W / 2 + (x - cx) * scale;
+  const Y = y => H / 2 - (y - cy) * scale;
+  const path = pts => 'M' + pts.map(q => X(q[0]).toFixed(2) + ' ' + Y(q[1]).toFixed(2)).join('L') + 'Z';
+  const shift = (pts, f) => pts.map(q => [q[0] + g.off[0] * f, q[1] + g.off[1] * f]);
+
+  const uid = 'clip' + (svgFor.n = (svgFor.n || 0) + 1);
+  let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + g.S.solid + ' with depth ' + nf(state.depth) + ' centimetres">';
+
+  // side faces, back-face culled against the extrusion direction
+  const n = g.poly.length, quads = [];
+  for (let i = 0; i < n; i++) {
+    const a = g.poly[i], b = g.poly[(i + 1) % n];
+    const nx = b[1] - a[1], ny = -(b[0] - a[0]);
+    if (nx * g.off[0] + ny * g.off[1] <= 0) continue;
+    quads.push(path([a, b, [b[0] + g.off[0], b[1] + g.off[1]], [a[0] + g.off[0], a[1] + g.off[1]]]));
+  }
+
+  s += '<defs><clipPath id="' + uid + '">' +
+       quads.map(q => '<path d="' + q + '"/>').join('') + '</clipPath></defs>';
+  s += '<path d="' + path(g.back) + '" fill="var(--area-tint)" stroke="var(--area)" stroke-width="1" opacity=".55" stroke-linejoin="round"/>';
+  s += quads.map(q => '<path d="' + q + '" fill="var(--depth-tint)" stroke="var(--depth)" stroke-width=".7" stroke-linejoin="round" opacity=".8"/>').join('');
+
+  // 1 cm slices — the same face, over and over — shown only where the solid's flank is visible
+  const k = Math.round(state.depth);
+  if (state.slices && k >= 2 && k <= 12) {
+    s += '<g clip-path="url(#' + uid + ')">';
+    for (let i = 1; i < k; i++) {
+      s += '<path d="' + path(shift(g.poly, i / state.depth)) + '" fill="none" stroke="var(--area)" stroke-width=".9" opacity=".45" stroke-linejoin="round"/>';
+    }
+    s += '</g>';
+  }
+
+  // front face: opaque plate, then the area tint on top
+  s += '<path d="' + path(g.poly) + '" fill="var(--card)" stroke="none"/>';
+  s += '<path d="' + path(g.poly) + '" fill="var(--area-tint)" stroke="var(--area)" stroke-width="1.8" stroke-linejoin="round"/>';
+
+  // depth label along one extrusion edge
+  let vi = 0;
+  for (let i = 1; i < n; i++) if (g.poly[i][0] + g.poly[i][1] * .2 > g.poly[vi][0] + g.poly[vi][1] * .2) vi = i;
+  const f = g.poly[vi], bk = [f[0] + g.off[0], f[1] + g.off[1]];
+  s += '<line x1="' + X(f[0]) + '" y1="' + Y(f[1]) + '" x2="' + X(bk[0]) + '" y2="' + Y(bk[1]) +
+       '" stroke="var(--depth)" stroke-width="1.4" stroke-dasharray="3 2.5"/>';
+  // label sits clear of its own leader line, pushed out along the edge normal
+  const mx = X((f[0] + bk[0]) / 2), my = Y((f[1] + bk[1]) / 2);
+  const ex = X(bk[0]) - X(f[0]), ey = Y(bk[1]) - Y(f[1]);
+  const el = Math.hypot(ex, ey) || 1;
+  let px = ey / el, py = -ex / el;
+  if (px < 0) { px = -px; py = -py; }
+  const lx = Math.max(34, Math.min(W - 34, mx + px * 13));
+  s += '<text x="' + lx.toFixed(1) + '" y="' + (my + py * 13 + 4).toFixed(1) +
+       '" text-anchor="middle" fill="var(--depth)" stroke="var(--card)" stroke-width="3.5" paint-order="stroke" ' +
+       'font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600">d = ' + nf(state.depth) + '</text>';
+  return s + '</svg>';
+}
+
+/* ---------- render ---------- */
+function render() {
+  document.getElementById('depth-val').textContent = nf(state.depth) + ' cm';
+  let firstShown = true;
+  ORDER.forEach(k => {
+    const grp = document.getElementById('grp-' + k);
+    grp.hidden = !state.selected.has(k);
+    grp.classList.toggle('first', !grp.hidden && firstShown);
+    if (!grp.hidden) firstShown = false;
+    const norm = SHAPES[k].norm(state.params[k]);
+    SHAPES[k].params.forEach(pd => {
+      document.getElementById('val-' + k + '-' + pd.k).textContent = nf2(norm[pd.k]) + ' cm';
+    });
+  });
+  document.getElementById('params-block').hidden = state.selected.size === 0;
+
+  const keys = ORDER.filter(k => state.selected.has(k));
+  const panels = document.getElementById('panels');
+  const totals = document.getElementById('totals');
+
+  if (!keys.length) {
+    panels.innerHTML = '<div class="empty">Choose a cross-section to start building a prism.</div>';
+    totals.textContent = '';
+    return;
+  }
+
+  const gs = keys.map(geometry);
+  const scale = Math.min(...gs.map(g => Math.min(
+    (W - 2 * PAD) / Math.max(g.bb.x1 - g.bb.x0, .001),
+    (H - 2 * PAD) / Math.max(g.bb.y1 - g.bb.y0, .001)
+  )));
+
+  panels.innerHTML = gs.map(g => {
+    const vol = g.area * state.depth;
+    const dims = g.S.params.map(pd =>
+      '<span class="dim">' + pd.label.replace(/ [a-z]$/i, '') + ' ' + nf2(g.p[pd.k]) + '</span>').join('');
+    const steps = g.S.steps(g.p).map(st =>
+      '<span class="row">' + st[0] + (st[1] ? '  <span class="lbl">— ' + st[1] + '</span>' : '') + '</span>').join('');
+    return '<article class="panel">' +
+      '<div class="panel-head"><h3>' + g.S.name + '</h3><span class="solid">' + g.S.solid + '</span></div>' +
+      '<div class="stage">' + svgFor(g, scale) + '</div>' +
+      '<div class="dims">' + dims + '</div>' +
+      '<div class="working">' + steps +
+        '<span class="row">A = <span class="a">' + nf(g.area) + ' cm²</span></span>' +
+        '<span class="row final">V = <span class="a">' + nf(g.area) + '</span> × <span class="d">' + nf(state.depth) +
+        '</span> = <span class="v">' + nf(vol) + ' cm³</span></span>' +
+      '</div></article>';
+  }).join('');
+
+  const totalV = gs.reduce((s, g) => s + g.area * state.depth, 0);
+  totals.innerHTML = keys.length + ' prism' + (keys.length > 1 ? 's' : '') +
+    ' at depth <span class="d">' + nf(state.depth) + ' cm</span>' +
+    '<span>combined volume <span class="v">' + nf(totalV) + ' cm³</span></span>';
+}
+
+/* ---------- controls ---------- */
+const chips = document.getElementById('chips');
+chips.innerHTML = ORDER.map(k =>
+  '<button class="chip" type="button" data-k="' + k + '" aria-pressed="' + state.selected.has(k) + '">' +
+  SHAPES[k].name + '</button>').join('');
+chips.addEventListener('click', e => {
+  const b = e.target.closest('.chip');
+  if (!b) return;
+  const k = b.dataset.k;
+  state.selected.has(k) ? state.selected.delete(k) : state.selected.add(k);
+  b.setAttribute('aria-pressed', state.selected.has(k));
+  render();
+});
+
+document.getElementById('params').innerHTML = ORDER.map(k =>
+  '<div class="params" id="grp-' + k + '"><h3>' + SHAPES[k].name + '</h3>' +
+  SHAPES[k].params.map(pd =>
+    '<div class="ctl"><div class="ctl-top"><span class="ctl-name">' + pd.label + '</span>' +
+    '<span class="ctl-val" id="val-' + k + '-' + pd.k + '">' + nf2(pd.val) + ' cm</span></div>' +
+    '<input class="slider" type="range" data-shape="' + k + '" data-p="' + pd.k + '" min="' + pd.min +
+    '" max="' + pd.max + '" step="' + pd.step + '" value="' + pd.val + '" aria-label="' +
+    SHAPES[k].name + ' ' + pd.label + ' in centimetres"></div>').join('') + '</div>').join('');
+
+document.getElementById('params').addEventListener('input', e => {
+  const el = e.target;
+  if (!el.dataset.shape) return;
+  state.params[el.dataset.shape][el.dataset.p] = parseFloat(el.value);
+  render();
+});
+document.getElementById('depth').addEventListener('input', e => {
+  state.depth = parseFloat(e.target.value);
+  render();
+});
+document.getElementById('slices').addEventListener('change', e => {
+  state.slices = e.target.checked;
+  render();
+});
+
+render();
+</script>
