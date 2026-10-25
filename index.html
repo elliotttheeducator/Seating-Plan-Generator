@@ -86,6 +86,11 @@
   .present-overlay.open{display:flex;}
   .present-bar{display:flex;gap:10px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);}
   .present-bar strong{font-size:16px;}
+  .lh-hide{display:none !important;}
+  .present-bar > *{white-space:nowrap;flex:none;}
+  .present-bar #presentHint{white-space:normal;flex:0 1 auto;min-width:0;}
+  #presentPlannerLink{text-decoration:none;font-weight:600;color:inherit;border:1px solid var(--border);border-radius:8px;padding:6px 10px;}
+  @media (max-width:1500px){ .present-bar #presentHint{display:none;} }
   .present-canvas-wrap{flex:1;display:flex;align-items:center;justify-content:center;overflow:auto;background:#f8fafc;padding:8px;}
   #presentSvg{background:#fff;width:100%;height:100%;max-width:100%;max-height:100%;}
   .pairs-body{flex:1;display:flex;overflow:hidden;}
@@ -330,7 +335,9 @@
 
 <div class="present-overlay" id="presentOverlay">
   <div class="present-bar">
+    <a id="presentPlannerLink" href="/teacher/" style="display:none;">&#8592; Planner</a>
     <strong id="presentTitle">Class</strong>
+    <select id="presentRoomSelect" title="Which room" style="display:none;"></select>
     <div class="mode-toggle" style="width:240px;">
       <button id="viewStudentBtn">Student View</button>
       <button id="viewTeacherBtn">Teacher View</button>
@@ -341,11 +348,15 @@
       <button id="presentModeGroupBtn">Group Tables</button>
       <button id="presentModePairBtn">Pair Up</button>
     </div>
+    <label class="hint" id="presentAltLabel" style="display:none;align-items:center;gap:5px;cursor:pointer;" title="">
+      <input type="checkbox" id="presentAltInput"> <span id="presentAltText">Alternate</span>
+    </label>
     <button id="presentGenerateBtn" class="primary">🎲 Generate New Plan</button>
     <button id="presentPrintBtn">🖨️ Print</button>
     <button id="presentPngBtn">🖼️ Export PNG</button>
     <button id="presentEditModeBtn">🔓 Edit Mode</button>
     <button id="presentCloseBtn">✕ Close</button>
+    <span class="hint" id="presentSaveState"></span>
   </div>
   <div class="present-canvas-wrap">
     <svg id="presentSvg" viewBox="0 0 1000 640" preserveAspectRatio="xMidYMid meet"></svg>
@@ -488,7 +499,14 @@ function cmToM(cm){ return Math.round(cm) / 100; }
 function mToCm(m){ return m * 100; }
 
 // ---------- state ----------
-let db = loadDB();
+// Learning Home mode (/teacher/seating.html?class=y7-science): the plan for that class lives on
+// the site (D1, /api/teacher/seating), so it is the same on every computer the teacher signs in on.
+// Nothing is saved until the stored plan has been read (lhLoaded), so an empty page can never
+// replace a real plan. This browser also keeps a copy of the last save, just in case.
+const LH_CLASS = (new URLSearchParams(location.search).get('class') || '').replace(/[^a-z0-9-]/g, '');
+const LH_BACKUP_KEY = 'seatingPlanGenerator.lh.' + LH_CLASS;
+let lhLoaded = false, lhUpdated = '', lhTimer = null, lhSaving = false, lhAgain = false, lhBlocked = false;
+let db = LH_CLASS ? { classes: [] } : loadDB();
 let currentClassId = db.classes[0] ? db.classes[0].id : null;
 let editRoomMode = false;
 let selectedTableId = null;
@@ -620,9 +638,49 @@ function loadDB(){
   return { classes: [] };
 }
 function saveDB(){
+  if(LH_CLASS){
+    if(!lhLoaded || lhBlocked) return;
+    try{ localStorage.setItem(LH_BACKUP_KEY, JSON.stringify(db)); }catch(e){}
+    clearTimeout(lhTimer);
+    lhTimer = setTimeout(lhSave, 700);
+    return;
+  }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
   if(linkedFileHandle) queueLinkedFileWrite();
 }
+// One save to the site at a time; changes made while one is going out are sent straight after.
+async function lhSave(keepalive){
+  clearTimeout(lhTimer); lhTimer = null;
+  if(lhSaving){ lhAgain = true; return; }
+  lhSaving = true;
+  setSaveState('Saving...');
+  const body = JSON.stringify({ classId: LH_CLASS, data: db, base: lhUpdated });
+  try{
+    const r = await fetch('/api/teacher/seating', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body,
+      keepalive: !!keepalive && body.length < 60000 // the browser refuses bigger keepalive requests
+    });
+    const j = await r.json().catch(() => ({}));
+    if(r.ok){ lhUpdated = j.updated; setSaveState('Saved'); }
+    else if(r.status === 409){
+      lhBlocked = true; setSaveState('Not saved');
+      alert('This seating plan was changed on another computer or tab. The page will reload with the newest copy.');
+      location.reload();
+    } else if(r.status === 401){
+      lhBlocked = true; setSaveState('Not saved');
+      alert('You have been signed out of Learning Home. Sign in again, then reopen the seating plan.');
+    } else { setSaveState('Not saved'); alert('Could not save the seating plan: ' + (j.error || r.status)); }
+  }catch(err){ setSaveState('Not saved (offline?)'); }
+  finally{
+    lhSaving = false;
+    if(lhAgain && !lhBlocked){ lhAgain = false; lhSave(); }
+  }
+}
+function setSaveState(t){
+  const el = document.getElementById('presentSaveState');
+  if(el) el.textContent = t;
+}
+window.addEventListener('pagehide', () => { if(LH_CLASS && lhTimer) lhSave(true); });
 // Serializes writes to the linked file — saveDB() fires many times in quick succession (drags,
 // generation, etc.), and calling createWritable() concurrently on the same handle can conflict.
 let linkedWriteInFlight = false, linkedWriteQueued = false;
@@ -2360,7 +2418,23 @@ function renderRoomInto(targetSvg, cls, flip, idPrefix, tight){
 
 function renderPresent(){
   const cls = getClass();
-  document.getElementById('presentTitle').textContent = cls.name + ' — Seating Plan';
+  document.getElementById('presentTitle').textContent = (db.classes.length > 1 ? 'Seating Plan' : cls.name + ' — Seating Plan');
+  const roomSel = document.getElementById('presentRoomSelect');
+  roomSel.style.display = db.classes.length > 1 ? '' : 'none';
+  roomSel.innerHTML = db.classes.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  roomSel.value = cls.id;
+  document.getElementById('presentPlannerLink').style.display = LH_CLASS ? '' : 'none';
+  // Alternate Seating straight from here, once two Category Groups are picked (Settings).
+  const cats = (cls.groups || []).filter(g => g.kind === 'category');
+  const alt = cls.alternateSeating;
+  const altOk = cats.length >= 2 && alt && alt.groupAId && alt.groupBId;
+  document.getElementById('presentAltLabel').style.display = altOk ? 'flex' : 'none';
+  if(altOk){
+    const nameOf = id => (cats.find(g => g.id === id) || {}).name || '?';
+    document.getElementById('presentAltText').textContent = `Alternate ${nameOf(alt.groupAId)}/${nameOf(alt.groupBId)}`;
+    document.getElementById('presentAltLabel').title = 'Tick, then Generate New Plan: every table mixes the two groups';
+    document.getElementById('presentAltInput').checked = !!alt.enabled;
+  }
   document.getElementById('viewStudentBtn').classList.toggle('active', presentView==='student');
   document.getElementById('viewTeacherBtn').classList.toggle('active', presentView==='teacher');
   document.getElementById('presentHint').textContent = presentView==='teacher'
@@ -2476,6 +2550,16 @@ document.getElementById('settingsCloseBtn').onclick = closeSettings;
 
 document.getElementById('presentBtn').onclick = openPresent;
 document.getElementById('presentCloseBtn').onclick = closePresent;
+document.getElementById('presentRoomSelect').onchange = (e) => {
+  currentClassId = e.target.value; selectedTableId = null; selectedWallId = null; selectedSeatId = null;
+  recordSeatingHistory(getClass());
+  render(); renderPresent();
+};
+document.getElementById('presentAltInput').onchange = (e) => {
+  const cls = getClass();
+  if(cls.alternateSeating) cls.alternateSeating.enabled = e.target.checked;
+  saveDB(); renderPresent();
+};
 // Landscape print: student view + teacher view side by side, room area maximised, with a
 // large title (asked for once via prompt) repeated at the top and bottom of the page.
 function printSplitView(){
@@ -2959,7 +3043,24 @@ function bootIntoApp(){
   else if(!isUnlocked()) showLock();
 }
 hideLock();
-if('showOpenFilePicker' in window && 'showDirectoryPicker' in window){
+if(LH_CLASS){
+  // Folders and files are not needed here: the plan saves to the site by itself.
+  for(const id of ['homeBtn','openFileBtn','linkedFileHint','unlinkFileBtn']) document.getElementById(id).classList.add('lh-hide');
+  document.querySelector('footer').textContent = 'Saved to Learning Home automatically, so it is the same on any computer you sign in on.';
+  fetch('/api/teacher/seating?class=' + encodeURIComponent(LH_CLASS)).then(async r => {
+    if(r.status === 401){ location.href = '/auth/login?next=' + encodeURIComponent(location.pathname + location.search); return; }
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.error || r.status);
+    if(j.data && Array.isArray(j.data.classes)) db = j.data;
+    lhUpdated = j.updated || '';
+    lhLoaded = true;
+    const def = db.classes.find(c => c.id === db.defaultRoom);
+    currentClassId = (def || db.classes[0] || {}).id || null;
+    bootIntoApp();
+  }).catch(err => {
+    alert('Could not load the seating plan from Learning Home (' + err.message + '). Nothing will be saved until it loads: reload the page to try again.');
+  });
+} else if('showOpenFilePicker' in window && 'showDirectoryPicker' in window){
   loadHandleFromDB(DIR_HANDLE_KEY).then((handle) => {
     homeDirHandle = handle;
     if(homeDirHandle){
