@@ -419,6 +419,12 @@
           <input type="checkbox" id="labModeToggle"> Keep pair desks and group tables as separate layouts
         </label>
       </div>
+      <div class="panel" style="margin-top:12px;">
+        <h2>Same Seating As</h2>
+        <div class="hint">For a class taught in two rooms: each pair desk here is matched with the desk in the same spot in the other room, and any change in either room (Generate, or moving someone) is copied to the other, so everyone has the same partner and the same spot in both.</div>
+        <select id="linkRoomSelect" style="width:100%;margin-top:8px;"></select>
+        <div class="hint" id="linkRoomHint" style="margin-top:6px;"></div>
+      </div>
     </div>
     <div class="pairs-col">
       <div class="panel">
@@ -448,7 +454,7 @@
       </div>
       <div class="panel" style="margin-top:12px;">
         <h2>Alternate Seating</h2>
-        <div class="hint">Pick two Category Groups (e.g. two reading levels, or two cliques) and every table will mix them in an alternating pattern, instead of letting either one take over a whole table.</div>
+        <div class="hint">Pick two Category Groups (e.g. two reading levels, or two cliques) and every table will mix them in an alternating pattern, instead of letting either one take over a whole table. The first group is kept apart more strongly than the second: put the bigger group, or the one that matters most, first.</div>
         <label class="hint" style="display:flex;align-items:center;gap:6px;margin-top:8px;">
           <input type="checkbox" id="alternateEnabledInput"> Alternate between two groups
         </label>
@@ -482,11 +488,6 @@ const CLUSTER_WEIGHT = 14;
 // than a totally random never-paired stranger, and Generate quietly breaks up a pairing the
 // teacher explicitly set up in favor of "freshness."
 const GREEN_BONUS = -20;
-// Alternate Seating: rewards seating the two chosen Category Groups next to each other and
-// penalizes two members of the SAME chosen group sitting next to each other, which — applied to
-// every neighbor pair the normal placement loop already checks — produces an alternating A/B/A/B
-// pattern at each table without needing a separate placement pass.
-const ALTERNATE_SAME_PENALTY = 15, ALTERNATE_OPPOSITE_BONUS = -15;
 const DOOR_LEN = 85;
 const BASE_ROOM_W = 1000, BASE_ROOM_H = 700; // default 10m x 7m
 const DEFAULT_THEME = { floorMode: 'texture', floorColor: '#c7cdd6', tableMode: 'texture', tableColor: '#f6f4ef' };
@@ -638,6 +639,7 @@ function loadDB(){
   return { classes: [] };
 }
 function saveDB(){
+  syncLinkedRoom(getClass());
   if(LH_CLASS){
     if(!lhLoaded || lhBlocked) return;
     try{ localStorage.setItem(LH_BACKUP_KEY, JSON.stringify(db)); }catch(e){}
@@ -706,46 +708,10 @@ function relKey(a,b){ return [a,b].sort().join('|'); }
 // A "group" is a set of students who are individually fine to pair up with each other (that's
 // normal — sitting next to one friend is expected and unpenalized) but who shouldn't all end
 // up seated in the same corner of the room. Distinct from red/yellow (which govern immediate
-// adjacency) and green/history (which govern who partners with whom).
-function groupsContaining(cls, studentId){
-  // Category groups (g.kind === 'category') opt out of the ordinary dispersion penalty below —
-  // their only effect on seating is the explicit Alternate Seating mix (see
-  // alternateGroupPenalty), not the general "don't all clump together" behavior.
-  return (cls.groups || []).filter(g => g.kind !== 'category' && g.studentIds.includes(studentId));
-}
-// Alternate Seating: looks up whether a and b belong to the two groups picked in
-// cls.alternateSeating, and returns the resulting neighbor-adjacency bonus/penalty (see the
-// ALTERNATE_* constants) — 0 if Alternate Seating isn't enabled or neither student is in either
-// chosen group.
-function alternateGroupPenalty(cls, aId, bId){
-  const alt = cls.alternateSeating;
-  if(!alt || !alt.enabled || !alt.groupAId || !alt.groupBId) return 0;
-  const gA = (cls.groups || []).find(g => g.id === alt.groupAId);
-  const gB = (cls.groups || []).find(g => g.id === alt.groupBId);
-  if(!gA || !gB) return 0;
-  const aInA = gA.studentIds.includes(aId), aInB = gB.studentIds.includes(aId);
-  const bInA = gA.studentIds.includes(bId), bInB = gB.studentIds.includes(bId);
-  if((aInA && bInA) || (aInB && bInB)) return ALTERNATE_SAME_PENALTY;
-  if((aInA && bInB) || (aInB && bInA)) return ALTERNATE_OPPOSITE_BONUS;
-  return 0;
-}
-// How many already-placed students within CLUSTER_RADIUS of (x,y) share a friend group with
-// this student — used as an escalating penalty so a 2nd/3rd nearby group-mate costs more than
-// the 1st (sitting with one friend is fine; a pile of four in one corner isn't).
-function clusterPenalty(cls, studentId, x, y, assign, seatsById){
-  const groups = groupsContaining(cls, studentId);
-  if(!groups.length) return 0;
-  let count = 0;
-  for(const seatId in assign){
-    const otherId = assign[seatId];
-    if(!otherId || otherId === studentId) continue;
-    const otherSeat = seatsById[seatId];
-    if(!otherSeat) continue;
-    if(Math.hypot(otherSeat.x-x, otherSeat.y-y) > CLUSTER_RADIUS) continue;
-    if(groups.some(g => g.studentIds.includes(otherId))) count++;
-  }
-  return count;
-}
+// adjacency) and green/history (which govern who partners with whom). Each pair of group-mates
+// within CLUSTER_RADIUS costs CLUSTER_WEIGHT (see pairCosts), so a pile of four in one corner
+// costs far more than one friend next door. Category groups (g.kind === 'category') don't do
+// this: their only effect is the Alternate Seating mix.
 
 // ---------- pairing history (avoid repeat tablemates week to week) ----------
 // cls.pairHistory maps relKey(a,b) -> number of times a & b have shared a table, recorded
@@ -964,22 +930,6 @@ function setSoloDeskStudent(cls, t, studentId){
   t.lockedStudentId = studentId || null;
   if(studentId && slot) cls.assignments[slot.id] = studentId;
 }
-function buildAdjacency(cls, seats){
-  const adj = {};
-  for(const s of seats) adj[s.id] = [];
-  for(let i=0;i<seats.length;i++){
-    for(let j=i+1;j<seats.length;j++){
-      const s1=seats[i], s2=seats[j];
-      const sameTable = s1.tableId === s2.tableId;
-      const d = Math.hypot(s1.x-s2.x, s1.y-s2.y);
-      if(sameTable || d < ADJ_THRESHOLD){
-        adj[s1.id].push(s2.id);
-        adj[s2.id].push(s1.id);
-      }
-    }
-  }
-  return adj;
-}
 
 function trySnap(table, cls){
   const others = cls.tables.filter(t => t.id !== table.id);
@@ -1051,208 +1001,213 @@ function setAssignment(cls, seatId, studentId){
 }
 
 // ---------- generation ----------
-// Picks which group tables to actually use for n students, preferring to spread across every
-// table available — a teacher who set up 5 tables wants the class spaced out across all 5, not
-// consolidated onto 2 while 3 sit empty. Only drops tables (starting with the smallest) when
-// using all of them genuinely isn't possible without leaving someone seated alone — e.g. 8
-// students can't be spread 2-per-table across 5 four-seat tables, so it falls back to 4 tables
-// of 2 rather than something like 4+2+1+1.
-function computeGroupTablePlan(n, tables){
-  const withCap = tables.map(t => ({ t, cap: seatLocalSlots(t).length })).sort((a,b)=>b.cap-a.cap);
-  for(let k=withCap.length; k>=1; k--){
-    if(n < 2*k) continue; // not enough students to give all k of these tables >=2 people
-    const chosen = withCap.slice(0,k);
-    const totalCap = chosen.reduce((s,x)=>s+x.cap,0);
-    if(totalCap >= n) return chosen.map(x=>x.t);
+// One generator for both modes, in two steps:
+// 1. Which seats: tables fill from the front (the whiteboard end) and each one fills up before
+//    the next is used, so any empty seats end up together at the back. Pair Up uses pair desks
+//    first and Group Tables uses group tables first; the other kind only if there isn't room.
+// 2. Who sits where: start from a random seating, then keep swapping two students (simulated
+//    annealing) while it lowers the cost from pairCosts: red/yellow rules, ticked pairings,
+//    pairing history, friend groups and Alternate Seating.
+const ROW_BAND = 45; // cm: tables whose centres are this close front-to-back count as one row
+// Alternate Seating weights. The first chosen group (e.g. M) is kept apart much more strongly
+// than the second. When the first group is the bigger one (more boys than girls), the extra
+// students are spread out instead of being sat together or at neighbouring desks.
+const ALT_A_SAME_TABLE = 40, ALT_A_NEAR = 15;
+const ALT_B_SAME_TABLE = 10, ALT_B_NEAR = 3;
+const ALT_MIX_TABLE = -15;
+
+// Orders tables front to back (row by row, middle of the room first within a row) and picks
+// how many students go at each: full tables from the front, the remainder at the last one.
+function planTables(cls, mode, n){
+  const pool = tablesForMode(cls, mode);
+  const wb = computeWhiteboardRect(cls);
+  const midX = wb.x + wb.w/2, frontY = wb.y + wb.h;
+  const order = (list) => list.slice().sort((a,b) => {
+    const ra = Math.round((a.y-frontY)/ROW_BAND), rb = Math.round((b.y-frontY)/ROW_BAND);
+    return ra !== rb ? ra - rb : Math.abs(a.x-midX) - Math.abs(b.x-midX);
+  });
+  const own = pool.filter(t => mode === 'pair' ? isPairDeskTable(t) : !isPairDeskTable(t));
+  const rest = pool.filter(t => !own.includes(t));
+  const ordered = order(own).concat(order(rest));
+  const plan = [];
+  let left = n;
+  for(const t of ordered){
+    if(left <= 0) break;
+    const cap = seatLocalSlots(t).length;
+    const k = Math.min(cap, left);
+    plan.push({ t, cap, k });
+    left -= k;
   }
-  return tables;
-}
-// Best-effort cleanup: if the greedy per-student placement below still leaves a table with
-// exactly 1 occupant (possible when red/yellow rules force an odd split), move that student
-// into another used table that has room, so no one ends up sitting alone.
-function fixSingletonGroupTables(assign, usedTables){
-  const occupantsOf = (t) => seatLocalSlots(t).map(s=>s.id).filter(id => assign[id]);
-  for(const t of usedTables){
-    const occupied = occupantsOf(t);
-    if(occupied.length !== 1) continue;
-    const loneSeatId = occupied[0];
-    const loneSlot = seatLocalSlots(t).find(s => s.id !== loneSeatId && !assign[s.id]);
-    let moved = false;
-    // First choice: move the lone student to a free seat at another table that already has
-    // people — moving them to a completely empty table would just relocate the singleton,
-    // not fix it.
-    for(const other of usedTables){
-      if(other.id === t.id || occupantsOf(other).length === 0) continue;
-      const freeSlot = seatLocalSlots(other).find(s => !assign[s.id]);
-      if(freeSlot){ assign[freeSlot.id] = assign[loneSeatId]; delete assign[loneSeatId]; moved = true; break; }
-    }
-    if(moved) continue;
-    // No already-occupied table has room — pull one student out of a table with slack (3+, so
-    // it stays 2+ after) and seat them alongside the lone student instead.
-    if(loneSlot){
-      for(const other of usedTables){
-        if(other.id === t.id) continue;
-        const otherOccupied = occupantsOf(other);
-        if(otherOccupied.length < 3) continue;
-        const donorSeatId = otherOccupied[otherOccupied.length-1];
-        assign[loneSlot.id] = assign[donorSeatId];
-        delete assign[donorSeatId];
-        moved = true;
-        break;
-      }
-    }
-    if(moved) continue;
-    // Last resort: nothing occupied has room or slack to give (e.g. every other table is
-    // exactly full) — moving to an empty table is still a relocation, not a fix, but it's the
-    // only seat left.
-    for(const other of usedTables){
-      if(other.id === t.id) continue;
-      const freeSlot = seatLocalSlots(other).find(s => !assign[s.id]);
-      if(freeSlot){ assign[freeSlot.id] = assign[loneSeatId]; delete assign[loneSeatId]; break; }
-    }
+  if(left > 0) return null;
+  // Nobody alone at a group table at the back: borrow one from the nearest full table that
+  // can spare one (3+ seats, so it still has 2+).
+  const last = plan[plan.length-1];
+  if(last && last.k === 1 && last.cap >= 3){
+    for(let i=plan.length-2;i>=0;i--){ if(plan[i].k >= 3){ plan[i].k--; last.k++; break; } }
   }
-}
-function generateGroupSeating(cls){
-  const students = generatableStudents(cls);
-  const targetTables = tablesForMode(cls, 'group');
-  const usedTables = computeGroupTablePlan(students.length, targetTables);
-  const seats = allSeatsWithWorld(cls, usedTables);
-  const seatsById = Object.fromEntries(seats.map(s=>[s.id,s]));
-  const adj = buildAdjacency(cls, seats);
-  const seatIds = seats.map(s=>s.id);
-  if(students.length > seatIds.length){
-    alert(`Not enough seats: ${students.length} students but only ${seatIds.length} seats.`);
-    return;
-  }
-  let bestAssign = null, bestScore = Infinity;
-  const TRIALS = 250;
-  for(let t=0;t<TRIALS;t++){
-    const assign = {};
-    const seatOrder = shuffle(seatIds);
-    const studentOrder = shuffle(students);
-    let score = 0;
-    for(const stu of studentOrder){
-      let bestPenalty = Infinity, ties = [];
-      for(const seatId of seatOrder){
-        if(assign[seatId]) continue;
-        let penalty = 0;
-        for(const nb of adj[seatId]){
-          const nbStu = assign[nb];
-          if(!nbStu) continue;
-          const rel = cls.relationships[relKey(stu.id, nbStu)];
-          if(rel === 'red') penalty += 1000;
-          else if(rel === 'yellow') penalty += 5;
-          else if(rel === 'green') penalty += GREEN_BONUS;
-          penalty += pairHistoryCount(cls, stu.id, nbStu) * 8;
-          penalty += alternateGroupPenalty(cls, stu.id, nbStu);
-        }
-        const seat = seatsById[seatId];
-        penalty += clusterPenalty(cls, stu.id, seat.x, seat.y, assign, seatsById) * CLUSTER_WEIGHT;
-        if(penalty < bestPenalty){ bestPenalty = penalty; ties = [seatId]; }
-        else if(penalty === bestPenalty){ ties.push(seatId); }
-      }
-      const chosen = ties[Math.floor(Math.random()*ties.length)];
-      assign[chosen] = stu.id;
-      score += bestPenalty;
-    }
-    if(score < bestScore){ bestScore = score; bestAssign = assign; if(score===0) break; }
-  }
-  fixSingletonGroupTables(bestAssign, usedTables);
-  cls.assignments = bestAssign;
-  reapplyLockedSeats(cls);
-  if(bestScore >= 1000) alert("Could not satisfy all red (never-sit-close) rules with the current layout — placed the best possible arrangement, please review the highlighted seating.");
+  return plan;
 }
 
-function generatePairSeating(cls){
+// What it costs to seat students a and b at two seats: on the same table, close by (another
+// table within ADJ_THRESHOLD), or just near (within CLUSTER_RADIUS, for friend groups only).
+function pairCosts(cls, a, b, catA, catB, avoidGroups){
+  const rel = cls.relationships[relKey(a,b)];
+  const rule = rel === 'red' ? 1000 : rel === 'yellow' ? 5 : 0;
+  const cluster = avoidGroups.some(g => g.has(a) && g.has(b)) ? CLUSTER_WEIGHT : 0;
+  let altSame = 0, altNear = 0;
+  if(catA){
+    const aA = catA.has(a), bA = catA.has(b), aB = catB.has(a), bB = catB.has(b);
+    if(aA && bA){ altSame = ALT_A_SAME_TABLE; altNear = ALT_A_NEAR; }
+    else if(aB && bB){ altSame = ALT_B_SAME_TABLE; altNear = ALT_B_NEAR; }
+    else if((aA && bB) || (aB && bA)) altSame = ALT_MIX_TABLE;
+  }
+  return {
+    same: rule + (rel === 'green' ? GREEN_BONUS : 0) + pairHistoryCount(cls, a, b) * 8 + altSame + cluster,
+    close: rule + altNear + cluster,
+    near: cluster
+  };
+}
+
+function generateSeating(cls, mode){
   const students = generatableStudents(cls);
-  const seats = allSeatsWithWorld(cls, tablesForMode(cls, 'pair'));
-  const seatsById = Object.fromEntries(seats.map(s=>[s.id,s]));
-  const adj = buildAdjacency(cls, seats);
-  const seatIds = seats.map(s=>s.id);
-  if(students.length > seatIds.length){
-    alert(`Not enough seats: ${students.length} students but only ${seatIds.length} seats.`);
+  if(!students.length) return;
+  const plan = planTables(cls, mode, students.length);
+  if(!plan){
+    const cap = tablesForMode(cls, mode).reduce((s,t) => s + seatLocalSlots(t).length, 0);
+    alert(`Not enough seats: ${students.length} students but only ${cap} seats.`);
     return;
   }
-  const slotSet = new Set(); const slotPairs = [];
-  for(const s of seats){
-    for(const nb of adj[s.id]){
-      const key = [s.id,nb].sort().join('~');
-      if(slotSet.has(key)) continue;
-      slotSet.add(key);
-      slotPairs.push([s.id, nb]);
-    }
+  const n = students.length;
+  const alt = cls.alternateSeating;
+  const gA = alt && alt.enabled && (cls.groups||[]).find(g => g.id === alt.groupAId);
+  const gB = alt && alt.enabled && (cls.groups||[]).find(g => g.id === alt.groupBId);
+  const catA = gA && gB ? new Set(gA.studentIds) : null, catB = gA && gB ? new Set(gB.studentIds) : null;
+  const avoidGroups = (cls.groups||[]).filter(g => g.kind !== 'category').map(g => new Set(g.studentIds));
+  // costs between every two students, worked out once: W[kind][i*n+j]
+  const W = { same: new Float64Array(n*n), close: new Float64Array(n*n), near: new Float64Array(n*n) };
+  for(let i=0;i<n;i++) for(let j=i+1;j<n;j++){
+    const c = pairCosts(cls, students[i].id, students[j].id, catA, catB, avoidGroups);
+    for(const k of ['same','close','near']){ W[k][i*n+j] = c[k]; W[k][j*n+i] = c[k]; }
   }
-  let bestPairing = null, bestPScore = Infinity;
-  for(let t=0;t<150;t++){
-    const pool = shuffle(students);
-    const pairs = []; let score = 0;
-    while(pool.length > 1){
-      const a = pool.pop();
-      let bestPen = Infinity, ties = [];
-      for(let i=0;i<pool.length;i++){
-        const rel = cls.relationships[relKey(a.id, pool[i].id)];
-        const pen = (rel==='red' ? 1000 : rel==='yellow' ? 5 : rel==='green' ? GREEN_BONUS : 0)
-          + pairHistoryCount(cls, a.id, pool[i].id) * 8
-          + alternateGroupPenalty(cls, a.id, pool[i].id);
-        if(pen < bestPen){ bestPen = pen; ties = [i]; }
-        else if(pen === bestPen) ties.push(i);
-      }
-      const idx = ties[Math.floor(Math.random()*ties.length)];
-      const b = pool.splice(idx,1)[0];
-      pairs.push([a,b]);
-      score += bestPen;
-    }
-    const leftover = pool.length ? [pool[0]] : [];
-    if(score < bestPScore){ bestPScore = score; bestPairing = {pairs, leftover}; }
+  // seats as numbers; every two seats that matter, once: [seat1, seat2, costs]
+  const seats = allSeatsWithWorld(cls, plan.map(p => p.t));
+  const S = seats.length, idx = Object.fromEntries(seats.map((s,i) => [s.id, i]));
+  const tableOf = seats.map(s => s.tableId);
+  const pairsList = [];
+  for(let i=0;i<S;i++) for(let j=i+1;j<S;j++){
+    const d = Math.hypot(seats[i].x-seats[j].x, seats[i].y-seats[j].y);
+    const w = tableOf[i] === tableOf[j] ? W.same : d < ADJ_THRESHOLD ? W.close : d <= CLUSTER_RADIUS ? W.near : null;
+    if(w) pairsList.push([i, j, w]);
   }
+  const cost = (at) => {
+    let c = 0;
+    for(const [i, j, w] of pairsList){ const a = at[i], b = at[j]; if(a >= 0 && b >= 0) c += w[a*n+b]; }
+    return c;
+  };
 
-  let bestPlacement = null, bestScore2 = Infinity;
-  for(let t=0;t<150;t++){
-    const assign = {};
-    const slotsLeft = shuffle(slotPairs);
-    const pairsOrder = shuffle(bestPairing.pairs);
-    let score = 0, ok = true;
-    for(const [a,b] of pairsOrder){
-      let bestPen = Infinity, ties = [];
-      for(let i=0;i<slotsLeft.length;i++){
-        const [s1,s2] = slotsLeft[i];
-        if(assign[s1] || assign[s2]) continue;
-        let pen = 0;
-        for(const seatId of [s1,s2]){
-          const stu = seatId===s1 ? a : b;
-          for(const nb of adj[seatId]){
-            if(nb===s1 || nb===s2) continue;
-            const other = assign[nb];
-            if(!other) continue;
-            const rel = cls.relationships[relKey(stu.id, other)];
-            if(rel==='red') pen += 1000;
-            else if(rel==='yellow') pen += 5;
-          }
-          const seat = seatsById[seatId];
-          pen += clusterPenalty(cls, stu.id, seat.x, seat.y, assign, seatsById) * CLUSTER_WEIGHT;
-        }
-        if(pen < bestPen){ bestPen = pen; ties = [i]; }
-        else if(pen === bestPen) ties.push(i);
-      }
-      if(!ties.length){ ok=false; break; }
-      const chosen = ties[Math.floor(Math.random()*ties.length)];
-      const [s1,s2] = slotsLeft[chosen];
-      assign[s1] = a.id; assign[s2] = b.id;
-      score += bestPen;
+  let best = null, bestCost = Infinity;
+  for(let run=0; run<6; run++){
+    // random start that respects how many sit at each table (-1 = empty seat)
+    const at = new Int32Array(S).fill(-1), pool = shuffle([...Array(n).keys()]);
+    for(const p of plan){
+      for(const sl of shuffle(seatLocalSlots(p.t)).slice(0, p.k)) at[idx[sl.id]] = pool.pop();
     }
-    if(!ok) continue;
-    for(const stu of bestPairing.leftover){
-      const free = seatIds.filter(id => !assign[id]);
-      if(!free.length){ ok=false; break; }
-      assign[free[Math.floor(Math.random()*free.length)]] = stu.id;
+    let cur = cost(at), temp = 30;
+    for(let it=0; it<6000; it++){
+      const x = Math.floor(Math.random()*S), y = Math.floor(Math.random()*S);
+      if(x === y || (at[x] < 0 && at[y] < 0)) continue;
+      // moving into an empty seat stays within the table, so every table keeps its count
+      if((at[x] < 0 || at[y] < 0) && tableOf[x] !== tableOf[y]) continue;
+      let t = at[x]; at[x] = at[y]; at[y] = t;
+      const next = cost(at);
+      if(next <= cur || Math.random() < Math.exp((cur-next)/temp)) cur = next;
+      else { t = at[x]; at[x] = at[y]; at[y] = t; }
+      temp = Math.max(0.5, temp * 0.999);
     }
-    if(!ok) continue;
-    if(score < bestScore2){ bestScore2 = score; bestPlacement = assign; }
+    if(cur < bestCost){ bestCost = cur; best = at.slice(); }
   }
-  if(!bestPlacement){ alert("Could not find a valid pair arrangement — try adding more tables or loosening rules."); return; }
-  cls.assignments = bestPlacement;
+  cls.assignments = {};
+  seats.forEach((s,i) => { if(best[i] >= 0) cls.assignments[s.id] = students[best[i]].id; });
   reapplyLockedSeats(cls);
-  if(bestScore2 >= 1000 || bestPScore >= 1000) alert("Could not satisfy all red (never-sit-close) rules with the current layout — placed the best possible arrangement, please review the highlighted seating.");
+  if(pairsList.some(([i,j,w]) => w !== W.near && best[i] >= 0 && best[j] >= 0 && cls.relationships[relKey(students[best[i]].id, students[best[j]].id)] === 'red'))
+    alert("Could not satisfy all red (never-sit-close) rules with the current layout. Please check the seating.");
+}
+function generateGroupSeating(cls){ generateSeating(cls, 'group'); }
+function generatePairSeating(cls){ generateSeating(cls, 'pair'); }
+// ---------- linked rooms (Same Seating As) ----------
+// A class taught in two rooms (7EH: Room 27 and Lab 34) can keep one seating. Each pair desk in
+// one room is matched with the desk in the same spot in the other (positions scaled to each
+// room's spread of desks, then the closest overall matching), seats left to right. The match is
+// stored on both rooms as cls.link = { roomId, seats: { mySeatId: theirSeatId } }, and every
+// save copies the room being worked on into its linked room, student by name.
+function linkDesks(cls){
+  const desks = cls.tables.filter(isPairDeskTable);
+  if(!desks.length) return [];
+  const xs = desks.map(t => t.x), ys = desks.map(t => t.y);
+  const x0 = Math.min(...xs), y0 = Math.min(...ys);
+  const w = Math.max(...xs) - x0 || 1, h = Math.max(...ys) - y0 || 1;
+  return desks.map(t => ({ t, x: (t.x-x0)/w, y: (t.y-y0)/h,
+    seats: seatLocalSlots(t).map(s => ({ id: s.id, x: seatWorldPos(t, s).x })).sort((a,b) => a.x-b.x).map(s => s.id) }));
+}
+// Cheapest one-to-one matching of rows to columns (Hungarian method), cost[i][j], rows <= cols.
+function hungarian(cost){
+  const n = cost.length, m = cost[0].length, INF = 1e18;
+  const u = new Array(n+1).fill(0), v = new Array(m+1).fill(0), p = new Array(m+1).fill(0), way = new Array(m+1).fill(0);
+  for(let i=1;i<=n;i++){
+    p[0] = i; let j0 = 0;
+    const minv = new Array(m+1).fill(INF), used = new Array(m+1).fill(false);
+    do {
+      used[j0] = true; const i0 = p[j0]; let delta = INF, j1 = 0;
+      for(let j=1;j<=m;j++) if(!used[j]){
+        const cur = cost[i0-1][j-1] - u[i0] - v[j];
+        if(cur < minv[j]){ minv[j] = cur; way[j] = j0; }
+        if(minv[j] < delta){ delta = minv[j]; j1 = j; }
+      }
+      for(let j=0;j<=m;j++){ if(used[j]){ u[p[j]] += delta; v[j] -= delta; } else minv[j] -= delta; }
+      j0 = j1;
+    } while(p[j0] !== 0);
+    do { const j1 = way[j0]; p[j0] = p[j1]; j0 = j1; } while(j0);
+  }
+  const rowTo = new Array(n).fill(-1);
+  for(let j=1;j<=m;j++) if(p[j]) rowTo[p[j]-1] = j-1;
+  return rowTo;
+}
+function linkRooms(a, b){
+  let A = linkDesks(a), B = linkDesks(b);
+  if(!A.length || !B.length) return;
+  const flip = A.length > B.length;
+  if(flip) [A, B] = [B, A];
+  const rowTo = hungarian(A.map(d => B.map(e => (d.x-e.x)**2 + (d.y-e.y)**2)));
+  const map = {};
+  A.forEach((d, i) => { const e = B[rowTo[i]]; if(e) d.seats.forEach((s, k) => { if(e.seats[k]) map[s] = e.seats[k]; }); });
+  const inv = Object.fromEntries(Object.entries(map).map(([x, y]) => [y, x]));
+  const [mapA, mapB] = flip ? [inv, map] : [map, inv];
+  a.link = { roomId: b.id, seats: mapA };
+  b.link = { roomId: a.id, seats: mapB };
+  syncLinkedRoom(a);
+}
+function unlinkRooms(cls){
+  const other = cls.link && db.classes.find(c => c.id === cls.link.roomId);
+  if(other) delete other.link;
+  delete cls.link;
+}
+// Copies cls's seating into its linked room. Left alone when someone here sits outside the
+// matched desks (a solo desk, or lab benches in Group Tables), so nothing is half copied.
+function syncLinkedRoom(cls){
+  const L = cls && cls.link;
+  const other = L && db.classes.find(c => c.id === L.roomId);
+  if(!other) return;
+  const key = (s) => s.name.trim().toLowerCase();
+  const idThere = Object.fromEntries(other.students.map(s => [key(s), s.id]));
+  const nameHere = Object.fromEntries(cls.students.map(s => [s.id, key(s)]));
+  const locked = lockedStudentIds(other), next = {};
+  for(const [seat, stu] of Object.entries(cls.assignments || {})){
+    if(!L.seats[seat]) return;
+    const id = idThere[nameHere[stu]];
+    if(id && !locked.has(id)) next[L.seats[seat]] = id;
+  }
+  other.assignments = next;
+  reapplyLockedSeats(other);
 }
 
 // ---------- Lab Mode: relocate the *existing* seating between pair desks and group tables ----------
@@ -1562,6 +1517,18 @@ function renderGroups(cls){
   }
 
   renderAlternateSeating(cls);
+  renderLinkRoom(cls);
+}
+
+function renderLinkRoom(cls){
+  const sel = document.getElementById('linkRoomSelect');
+  const others = db.classes.filter(c => c.id !== cls.id);
+  sel.innerHTML = '<option value="">None (this room has its own seating)</option>' +
+    others.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  const other = cls.link && others.find(c => c.id === cls.link.roomId);
+  sel.value = other ? other.id : '';
+  const n = other ? Object.keys(cls.link.seats).length / 2 : 0;
+  document.getElementById('linkRoomHint').textContent = other ? `${n} desks matched with ${other.name}.` : '';
 }
 
 // Alternate Seating: lets the two dropdowns below only offer Category Groups (an "Avoid
@@ -2177,6 +2144,15 @@ document.getElementById('resetHistoryBtn').onclick = () => {
 document.getElementById('labModeToggle').onchange = (e) => {
   const cls = getClass();
   cls.labModeEnabled = e.target.checked;
+  saveDB(); render();
+};
+document.getElementById('linkRoomSelect').onchange = (e) => {
+  const cls = getClass(), other = db.classes.find(c => c.id === e.target.value);
+  if(cls.link) unlinkRooms(cls);
+  if(other){
+    if(!confirm(`This copies the seating in ${cls.name} into ${other.name}. From now on a change in either room is copied to the other.`)){ render(); return; }
+    linkRooms(cls, other);
+  }
   saveDB(); render();
 };
 
