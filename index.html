@@ -2235,14 +2235,14 @@ svg.addEventListener('pointerup', (e) => {
     const seatEl = document.elementFromPoint(e.clientX, e.clientY);
     const hoverEl = seatEl ? seatEl.closest('[data-role="seat"]') : null;
     const targetId = hoverEl ? hoverEl.getAttribute('data-id') : null;
-    // Always "replace": whoever was in the target seat is simply bumped back out to unseated
-    // (not swapped in behind) — dropping on an occupied seat or an empty one behaves the same
-    // way, which keeps the gesture predictable. Dropping on the seat it started from, or
-    // outside any seat entirely, cancels the move.
+    // Swap: whoever was in the target seat moves into the seat the dragged student came from,
+    // so nobody is ever knocked out of the plan; dropping on an empty seat just moves them.
+    // Dropping on the seat it started from, or outside any seat entirely, cancels the move.
     if(targetId && targetId !== drag.sourceSeatId){
       drag.before = namePositions(svg);
-      delete cls.assignments[targetId];
+      const bumped = getAssignment(cls, targetId);
       delete cls.assignments[drag.sourceSeatId];
+      if(bumped) cls.assignments[drag.sourceSeatId] = bumped;
       cls.assignments[targetId] = drag.studentId;
       syncSoloLocksToAssignments(cls);
       saveDB();
@@ -2499,15 +2499,21 @@ document.getElementById('seatStudentSelect').addEventListener('change', () => {
   const cls = getClass();
   if(!selectedSeatId || !findSeatById(cls, selectedSeatId)) return;
   const val = document.getElementById('seatStudentSelect').value;
-  // Always-replace, same as the drag gesture: clear this seat, and if the chosen student was
-  // seated somewhere else, clear that seat too — a student only ever occupies one seat.
+  // Swap, same as the drag gesture: if the chosen student was seated somewhere else, whoever is
+  // in this seat moves into their old seat (a student only ever occupies one seat). Choosing
+  // "empty" still clears the seat.
+  const before = namePositions(svg);
+  const current = getAssignment(cls, selectedSeatId);
   delete cls.assignments[selectedSeatId];
   if(val){
-    for(const k in cls.assignments) if(cls.assignments[k] === val) delete cls.assignments[k];
+    let from = null;
+    for(const k in cls.assignments) if(cls.assignments[k] === val){ from = k; delete cls.assignments[k]; }
+    if(from && current) cls.assignments[from] = current;
     cls.assignments[selectedSeatId] = val;
   }
   syncSoloLocksToAssignments(cls);
   saveDB(); render();
+  flyNames(svg, before);
 });
 
 // ---------- present / print view ----------
