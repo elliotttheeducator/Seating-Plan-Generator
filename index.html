@@ -898,6 +898,19 @@ function groupsContaining(cls, studentId){
 // cls.alternateSeating, and returns the resulting neighbor-adjacency bonus/penalty (see the
 // ALTERNATE_* constants) — 0 if Alternate Seating isn't enabled or neither student is in either
 // chosen group.
+// Alternate Seating on and both students in the same group (two boys, or two girls)
+function sameAlternateGroup(cls, aId, bId){
+  return alternateGroupPenalty(cls, aId, bId) === ALTERNATE_SAME_PENALTY && ALTERNATE_SAME_PENALTY !== 0;
+}
+// A ticked pairing or Sit together between two students. With Alternate Seating on and both in the
+// same group, a ticked pairing never pulls them onto one desk, and Sit together means the same table
+// (desks that touch), never one desk: boy-girl comes first. onOneDesk: the two seats are one table.
+function relBonus(cls, aId, bId, rel, onOneDesk){
+  const apart = onOneDesk && sameAlternateGroup(cls, aId, bId);
+  if(rel === 'green') return apart ? 0 : GREEN_BONUS;
+  if(rel === 'together') return apart ? 0 : TOGETHER_SAME;
+  return 0;
+}
 function alternateGroupPenalty(cls, aId, bId){
   const alt = cls.alternateSeating;
   if(!alt || !alt.enabled || !alt.groupAId || !alt.groupBId) return 0;
@@ -1323,8 +1336,7 @@ function generateGroupSeating(cls){
           const rel = cls.relationships[relKey(stu.id, nbStu)];
           if(rel === 'red') penalty += 1000;
           else if(rel === 'yellow') penalty += 5;
-          else if(rel === 'green') penalty += GREEN_BONUS;
-          else if(rel === 'together') penalty += TOGETHER_SAME;
+          else if(rel === 'green' || rel === 'together') penalty += relBonus(cls, stu.id, nbStu, rel, seatsById[nb] && seatsById[nb].tableId === seatsById[seatId].tableId);
           penalty += pairHistoryCount(cls, stu.id, nbStu) * 8;
           penalty += alternateGroupPenalty(cls, stu.id, nbStu);
         }
@@ -1373,7 +1385,7 @@ function generatePairSeating(cls){
       let bestPen = Infinity, ties = [];
       for(let i=0;i<pool.length;i++){
         const rel = cls.relationships[relKey(a.id, pool[i].id)];
-        const pen = (rel==='red' ? 1000 : rel==='yellow' ? 5 : rel==='green' ? GREEN_BONUS : rel==='together' ? TOGETHER_SAME : 0)
+        const pen = (rel==='red' ? 1000 : rel==='yellow' ? 5 : relBonus(cls, a.id, pool[i].id, rel, true))
           + pairHistoryCount(cls, a.id, pool[i].id) * 8
           + alternateGroupPenalty(cls, a.id, pool[i].id);
         if(pen < bestPen){ bestPen = pen; ties = [i]; }
