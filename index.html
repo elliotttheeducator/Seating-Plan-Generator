@@ -45,7 +45,7 @@
   .studentlist li .name{flex:1;}
   .studentlist li.seated .name{color:var(--muted);text-decoration:line-through;}
   .dot{width:10px;height:10px;border-radius:50%;display:inline-block;flex:0 0 auto;}
-  .dot.red{background:var(--red);} .dot.yellow{background:var(--yellow);} .dot.green{background:var(--green);}
+  .dot.red{background:var(--red);} .dot.together{background:#7c3aed;} .dot.yellow{background:var(--yellow);} .dot.green{background:var(--green);}
   .rel-list{list-style:none;margin:8px 0 0;padding:0;max-height:140px;overflow-y:auto;}
   .rel-list li{display:flex;align-items:center;gap:6px;font-size:12px;padding:4px 2px;border-bottom:1px solid #f0f2f5;}
   .rel-list li span.names{flex:1;}
@@ -447,9 +447,12 @@
     <div class="panel">
       <h2>Mode</h2>
       <div class="mode-toggle">
-        <button id="modeGroupBtn">Group Tables</button>
-        <button id="modePairBtn">Pair Up</button>
+        <button id="modeGroupBtn" title="Students sit in groups: Generate fills the group tables (4 or 6 seats) first, front to back">Group Tables</button>
+        <button id="modePairBtn" title="Students sit in twos: Generate fills the pair desks first, front to back">Pair Up</button>
       </div>
+      <div class="hint" style="margin-top:6px;"><b>Group Tables</b>: students sit in groups, filling the group tables first.
+        <b>Pair Up</b>: students sit in twos, filling the pair desks first. Switching keeps who sits together
+        (a group splits into its pairs). In a room of only pair desks, both fill the same desks.</div>
       <div class="row" style="margin-top:10px;">
         <button id="generateBtn" class="primary" style="flex:1;">🎲 Generate Seating</button>
       </div>
@@ -549,8 +552,8 @@
     <span class="hint" id="presentHint"></span>
     <span style="margin-left:auto;"></span>
     <div class="mode-toggle" style="width:220px;" id="presentModeToggle">
-      <button id="presentModeGroupBtn">Group Tables</button>
-      <button id="presentModePairBtn">Pair Up</button>
+      <button id="presentModeGroupBtn" title="Students sit in groups: Generate fills the group tables (4 or 6 seats) first, front to back">Group Tables</button>
+      <button id="presentModePairBtn" title="Students sit in twos: Generate fills the pair desks first, front to back">Pair Up</button>
     </div>
     <button id="presentGenerateBtn" class="primary">🎲 Generate New Plan</button>
     <button id="presentPrintBtn">🖨️ Print</button>
@@ -597,13 +600,14 @@
     <div class="pairs-col" style="flex:0 0 380px;max-width:380px;">
       <div class="panel" id="relPanel">
         <h2>Proximity Rules</h2>
-        <small class="field-label">Everyone's fine together by default — only set the exceptions: Red = never sit close &nbsp;·&nbsp; Yellow = avoid if possible</small>
+        <small class="field-label">Everyone's fine together by default — only set the exceptions: Red = never sit close &nbsp;·&nbsp; Yellow = avoid if possible &nbsp;·&nbsp; Sit together = put them at the same table</small>
         <div class="row wrap" style="margin-top:6px;">
           <select id="relA"></select>
           <select id="relB"></select>
           <select id="relColor">
             <option value="red">Red</option>
             <option value="yellow">Yellow</option>
+            <option value="together">Sit together</option>
           </select>
           <button id="addRelBtn" class="primary">Set</button>
         </div>
@@ -686,6 +690,10 @@ const CLUSTER_WEIGHT = 14;
 // than a totally random never-paired stranger, and Generate quietly breaks up a pairing the
 // teacher explicitly set up in favor of "freshness."
 const GREEN_BONUS = -20;
+// "Sit together" (Proximity Rules): a pull much stronger than a ticked pairing, for two students the
+// teacher wants at the same table. Green ticks spread over a whole friendship group dilute each
+// other; this one wins over them and over pairing history. 
+const TOGETHER_SAME = -70;
 // Alternate Seating: rewards seating the two chosen Category Groups next to each other and
 // penalizes two members of the SAME chosen group sitting next to each other, which — applied to
 // every neighbor pair the normal placement loop already checks — produces an alternating A/B/A/B
@@ -1316,6 +1324,7 @@ function generateGroupSeating(cls){
           if(rel === 'red') penalty += 1000;
           else if(rel === 'yellow') penalty += 5;
           else if(rel === 'green') penalty += GREEN_BONUS;
+          else if(rel === 'together') penalty += TOGETHER_SAME;
           penalty += pairHistoryCount(cls, stu.id, nbStu) * 8;
           penalty += alternateGroupPenalty(cls, stu.id, nbStu);
         }
@@ -1364,7 +1373,7 @@ function generatePairSeating(cls){
       let bestPen = Infinity, ties = [];
       for(let i=0;i<pool.length;i++){
         const rel = cls.relationships[relKey(a.id, pool[i].id)];
-        const pen = (rel==='red' ? 1000 : rel==='yellow' ? 5 : rel==='green' ? GREEN_BONUS : 0)
+        const pen = (rel==='red' ? 1000 : rel==='yellow' ? 5 : rel==='green' ? GREEN_BONUS : rel==='together' ? TOGETHER_SAME : 0)
           + pairHistoryCount(cls, a.id, pool[i].id) * 8
           + alternateGroupPenalty(cls, a.id, pool[i].id);
         if(pen < bestPen){ bestPen = pen; ties = [i]; }
@@ -2909,7 +2918,7 @@ function renderPairsScreen(){
       li.className = 'pickable';
       const toggle = () => {
         const key = relKey(stu.id, other.id);
-        if(cls.relationships[key] === 'green') delete cls.relationships[key];
+        if(cls.relationships[key] === 'green' || cls.relationships[key] === 'together') delete cls.relationships[key];
         else cls.relationships[key] = 'green';
         saveDB();
         renderPairsScreen();
@@ -2917,7 +2926,7 @@ function renderPairsScreen(){
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.className = 'pair-checkbox';
-      checkbox.checked = rel === 'green';
+      checkbox.checked = rel === 'green' || rel === 'together';
       checkbox.onclick = (ev) => { ev.stopPropagation(); toggle(); };
       li.appendChild(checkbox);
       const nameSpan = document.createElement('span');
