@@ -148,6 +148,89 @@
     #printStudentCol, #printTitleBottom{transform:rotate(180deg);}
     .print-split-col svg{flex:1;width:100%;height:100%;min-height:0;display:block;}
   }
+
+  /* ---------- Phone (max-width 720px): the planner installed as an app on a phone ----------
+     One column, big tap targets, pinch and drag to zoom the room, tap two seats to swap.
+     Nothing here changes what a computer shows: .phonly is hidden off a phone. */
+  @media (min-width:721px){ .phonly{display:none !important;} }
+  .phonly[hidden]{display:none !important;}
+  .ph-list{display:none;}
+  @media (max-width:720px){
+    body{-webkit-text-size-adjust:100%;}
+    button{min-height:40px;padding:8px 12px;font-size:14px;touch-action:manipulation;}
+    button.small{min-height:36px;padding:6px 10px;font-size:13px;}
+    input[type=text], input[type=number], select{font-size:16px;min-height:40px;}
+    header{padding:8px 12px;padding-top:max(8px, env(safe-area-inset-top));}
+    header h1{font-size:16px;margin-bottom:6px;}
+    .tabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;}
+    .tab{flex:none;padding:8px 12px;}
+    .hdr-actions{flex-wrap:wrap;margin-left:0;}
+    .main{flex-direction:column;align-items:stretch;padding:10px;gap:10px;}
+    .sidebar{width:auto;flex:none;order:2;}
+    .center{order:1;}
+    .studentlist{max-height:260px;}
+    .studentlist li{padding:8px 2px;font-size:15px;}
+    .toolbar{gap:6px;}
+    .toolbar .sep{display:none;}
+    .toolbar > .row{flex-wrap:wrap;}
+    .canvas-wrap{position:relative;overflow:hidden;}
+    .canvas-wrap{order:-1;}
+    svg#canvas{width:100%;height:min(68vh, 150vw);touch-action:none;}
+    .toolbar button{min-height:36px;padding:6px 10px;font-size:13px;}
+    .toolbar input[type=number]{min-height:36px;}
+    /* what is selected is edited from a sheet at the bottom, under the thumb */
+    #selectedTableBar, #selectedSeatBar{position:fixed;left:8px;right:8px;bottom:max(8px, env(safe-area-inset-bottom));z-index:900;
+      flex-wrap:wrap;gap:6px;padding:10px 12px;border-radius:16px;background:rgba(255,255,255,.92);
+      -webkit-backdrop-filter:blur(18px) saturate(1.6);backdrop-filter:blur(18px) saturate(1.6);
+      box-shadow:0 1px 0 rgba(255,255,255,.9) inset, 0 10px 30px rgba(15,23,42,.22), 0 2px 6px rgba(15,23,42,.12);}
+    #selectedSeatBar select{flex:1;}
+    .main{padding-bottom:120px;}
+    footer{padding-bottom:max(6px, env(safe-area-inset-bottom));}
+
+    .present-bar{flex-wrap:wrap;gap:6px;padding:8px 10px;padding-top:max(8px, env(safe-area-inset-top));}
+    .present-bar > *{flex:none;}
+    .present-bar strong{font-size:15px;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+    .present-bar > span[style*="margin-left:auto"]{display:none;}
+    .present-bar #presentHint, #pairsHint, #settingsOverlay .present-bar > .hint{display:none;}
+    .present-bar .mode-toggle{width:auto !important;flex:1 1 40%;}
+    .present-bar .mode-toggle button{font-size:13px;padding:6px 4px;min-height:38px;}
+    #presentPrintBtn, #presentPngBtn, #presentEditModeBtn, #presentCloseBtn, #presentPlannerLink{min-height:38px;font-size:13px;padding:6px 8px;}
+    #presentGenerateBtn{order:10;flex:1 1 100%;min-height:48px;font-size:16px;font-weight:700;}
+    #presentPrintBtn, #presentPngBtn, #presentEditModeBtn, #presentCloseBtn{flex:1 1 auto;}
+    #presentSaveState{order:11;flex:1 1 100%;text-align:center;}
+    #presentRoomSelect{max-width:40%;}
+    .present-canvas-wrap{position:relative;padding:4px;}
+    #presentSvg{touch-action:none;}
+    .present-overlay.ph-listing .present-canvas-wrap{display:none;}
+    .present-overlay.ph-listing .ph-list{display:block;flex:1;overflow-y:auto;padding:10px 10px max(16px, env(safe-area-inset-bottom));background:#f8fafc;}
+    .ph-seg{display:flex;border:1px solid var(--border);border-radius:10px;overflow:hidden;flex:1 1 100%;}
+    .ph-seg button{flex:1;border:none;border-radius:0;background:#f1f4f8;min-height:38px;font-weight:600;}
+    .ph-seg button.active{background:var(--accent);color:#fff;}
+    .ph-tbl{background:#fff;border:1px solid var(--border);border-radius:14px;padding:10px 12px;margin-bottom:10px;
+      box-shadow:0 1px 0 #fff inset, 0 2px 8px rgba(15,23,42,.06);}
+    .ph-tbl h3{margin:0 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);}
+    .ph-seats{display:flex;flex-wrap:wrap;gap:6px;}
+    .ph-seat{min-height:44px;padding:8px 12px;border-radius:12px;background:#dbe8ff;border:1px solid #b9cff7;font-size:15px;font-weight:600;color:var(--text);}
+    .ph-seat.empty{background:#fff;border-style:dashed;color:var(--muted);font-weight:400;}
+    .ph-seat.picked{background:var(--accent);border-color:var(--accent-dark);color:#fff;box-shadow:0 0 0 3px rgba(37,99,235,.25);}
+    .ph-seat.unseated{background:#fff7ed;border-color:#fed7aa;}
+    circle.seat.ph-picked{stroke:#f59e0b;stroke-width:5;}
+    .ph-fit{position:absolute;right:10px;bottom:10px;z-index:5;border-radius:999px;background:rgba(255,255,255,.92);
+      box-shadow:0 4px 14px rgba(15,23,42,.18);font-weight:600;}
+    .ph-hint{position:fixed;left:50%;bottom:max(16px, env(safe-area-inset-bottom));transform:translateX(-50%);z-index:1100;
+      background:#1f2937;color:#fff;padding:10px 16px;border-radius:999px;font-size:14px;font-weight:600;white-space:nowrap;
+      box-shadow:0 8px 24px rgba(15,23,42,.3);}
+    .ph-hint[hidden]{display:none;}
+
+    .pairs-body{flex-direction:column;overflow-y:auto;}
+    .pairs-col{flex:none !important;max-width:none !important;border-right:none;border-bottom:1px solid var(--border);overflow:visible;padding:12px;}
+    .pairs-col .studentlist li{padding:11px 8px;font-size:15px;}
+    .pairs-col .studentlist li .pair-checkbox{width:22px;height:22px;}
+    .rel-list{max-height:none;}
+    .rel-list li{font-size:14px;padding:8px 2px;}
+    .lock-card{width:min(320px, calc(100vw - 32px));padding:24px;}
+  }
+  @media print{ .phonly, .ph-list, .ph-hint{display:none !important;} }
 </style>
 </head>
 <body>
@@ -300,11 +383,13 @@
         <select id="seatStudentSelect"><option value="">— empty —</option></select>
       </span>
       <div class="sep"></div>
+      <button id="phDelBtn" class="small danger phonly" hidden>Delete selected</button>
       <button id="presentBtn">🖥️ Present / Print View</button>
       <button id="settingsBtn">⚙️ Settings</button>
     </div>
     <div class="canvas-wrap">
       <svg id="canvas" width="1000" height="640" viewBox="0 0 1000 640"></svg>
+      <button class="ph-fit phonly" id="phEditFit" hidden>Fit room</button>
     </div>
   </div>
 </div>
@@ -346,12 +431,16 @@
     <button id="presentPngBtn">🖼️ Export PNG</button>
     <button id="presentEditModeBtn">🔓 Edit Mode</button>
     <button id="presentCloseBtn">✕ Close</button>
+    <div class="ph-seg phonly" id="phPresentSeg"><button data-v="room">Room</button><button data-v="list">List of tables</button></div>
   </div>
   <div class="present-canvas-wrap">
     <svg id="presentSvg" viewBox="0 0 1000 640" preserveAspectRatio="xMidYMid meet"></svg>
+    <button class="ph-fit phonly" id="phPresentFit" hidden>Fit room</button>
   </div>
+  <div class="ph-list" id="phList"></div>
 </div>
 
+<div class="ph-hint" id="phHint" hidden></div>
 <div class="present-overlay" id="pairsOverlay">
   <div class="present-bar">
     <strong>Pairing Screen</strong>
@@ -507,6 +596,8 @@ let showingHome = false;
 // the visible viewBox, recomputed to fit content on every full render() so the room can
 // grow (or shrink back) without limit while the app zooms to keep everything in frame
 let currentViewBox = { x:0, y:0, w:BASE_ROOM_W, h:BASE_ROOM_H };
+// Phone zoom (pinch) for the editor and Present: k is the zoom, fx/fy the centre as a share of the fitted room.
+let phEditZoom = { k:1, fx:.5, fy:.5 }, phPresentZoom = { k:1, fx:.5, fy:.5 };
 
 // Bounds come from the actual walls (if any) — not unioned with a hardcoded default room
 // rectangle, which used to leave a phantom gap whenever a room's walls didn't start at (0,0).
@@ -1824,7 +1915,7 @@ function render(){
   if(!cls) return;
   renderStudents(cls);
   syncRoomSizeInputs(cls);
-  currentViewBox = computeFitViewBox(cls);
+  currentViewBox = phZoomBox(computeFitViewBox(cls), phEditZoom);
   renderCanvas(cls);
   updateSelectedTableBar(cls);
   updateSelectedSeatBar(cls);
@@ -1832,6 +1923,7 @@ function render(){
   document.getElementById('modePairBtn').classList.toggle('active', cls.mode==='pair');
   document.getElementById('editRoomBtn').classList.toggle('active', editRoomMode);
   document.getElementById('roomHint').style.display = editRoomMode ? '' : 'none';
+  phSyncEditor();
 }
 
 // ---------- interaction ----------
@@ -1906,10 +1998,10 @@ svg.addEventListener('pointerdown', (e) => {
     // someone directly. selectedTableId is left alone so the table's own bar (size/rotate/
     // delete) stays visible while a seat within it is also selected.
     if(studentId){
-      drag = { type:'seat', sourceSeatId:id, studentId, hoverSeatId:id };
+      drag = { type:'seat', sourceSeatId:id, studentId, hoverSeatId:id, touch: e.pointerType === 'touch' };
       svg.setPointerCapture(e.pointerId);
       renderCanvas(cls);
-    }
+    } else if(e.pointerType === 'touch'){ selectedSeatId = id; render(); }
     return;
   }
   if(role === 'door-rotate-handle'){
@@ -2010,7 +2102,7 @@ svg.addEventListener('pointerup', (e) => {
       cls.assignments[targetId] = drag.studentId;
       syncSoloLocksToAssignments(cls);
       saveDB();
-    }
+    } else if(targetId && drag.touch) selectedSeatId = targetId;
   }
   drag = null;
   render();
@@ -2349,7 +2441,7 @@ function renderRoomInto(targetSvg, cls, flip, idPrefix, tight){
       // No extra scale-up here (unlike editor labels elsewhere) — the seat spacing is
       // already tight around slot.r, and Present is viewed at a much larger physical
       // size anyway (projector/fullscreen), so inflating the circles would overlap them.
-      el('circle', {cx:slot.x, cy:slot.y, r:slot.r, class:'seat'+(student?' filled':'')}, g);
+      el('circle', {cx:slot.x, cy:slot.y, r:slot.r, class:'seat'+(student?' filled':''), 'data-seat':slot.id}, g);
       if(student){
         const tg = el('g', {transform:`translate(${slot.x},${slot.y}) rotate(${-trot})`}, g);
         renderSeatLabel(tg, fitSeatLabel(student.name, slot.r, firstNameCounts), FILLED_SEAT_COLOR, nearestSeatGapHalf(tSlots, slot));
@@ -2372,7 +2464,177 @@ function renderPresent(){
   document.getElementById('presentEditModeBtn').textContent = isUnlocked() ? '🔓 Edit Mode' : '🔒 Edit Mode';
 
   renderRoomInto(presentSvg, cls, presentView === 'teacher', 'present');
+  phAfterPresent(cls);
 }
+
+// ---------- phone ----------
+// On a phone (max-width 720px, the planner installed as an app): pinch to zoom the room and drag
+// to look around, a tap selects a seat in the editor, and Present can swap two students with two
+// taps (on the room, or on the List of tables, which is easier to read on a small screen).
+// A computer never reaches any of this: the zoom stays at 1 and the phone controls are hidden.
+function isPhone(){ return matchMedia('(max-width:720px)').matches; }
+function phZoomBox(vb, z){
+  if(!z || z.k <= 1) return vb;
+  const w = vb.w / z.k, h = vb.h / z.k;
+  z.fx = clamp(z.fx, w / vb.w / 2, 1 - w / vb.w / 2);
+  z.fy = clamp(z.fy, h / vb.h / 2, 1 - h / vb.h / 2);
+  return { x: vb.x + z.fx * vb.w - w / 2, y: vb.y + z.fy * vb.h - h / 2, w, h };
+}
+// Two fingers pinch and move the room; one finger drags it when canPan(e) says the touch landed on
+// empty floor. Runs in the capture phase, ahead of the editor's own pointer handlers.
+function phGestures(target, z, base, redraw, canPan){
+  const pts = new Map();
+  let g = null;
+  const scaleOf = (b, k) => { const r = target.getBoundingClientRect(); return Math.min(r.width / b.w, r.height / b.h) * k; };
+  const mid = () => { const a = [...pts.values()]; return a.length > 1 ? { x:(a[0].x + a[1].x) / 2, y:(a[0].y + a[1].y) / 2, d:Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) || 1 } : { x:a[0].x, y:a[0].y, d:1 }; };
+  const start = (pan) => {
+    const b = base(); if(!b) return;
+    const m = mid(), r = target.getBoundingClientRect(), s = scaleOf(b, z.k);
+    const cx = b.x + z.fx * b.w, cy = b.y + z.fy * b.h;
+    // the room point under the fingers stays under them
+    g = { pan, b, m, k0:z.k, px: cx + (m.x - (r.left + r.width / 2)) / s, py: cy + (m.y - (r.top + r.height / 2)) / s, moved:false };
+  };
+  target.addEventListener('pointerdown', (e) => {
+    if(e.pointerType !== 'touch' || !isPhone()) return;
+    pts.set(e.pointerId, { x:e.clientX, y:e.clientY });
+    if(pts.size === 2){
+      if(drag){ const d = drag; drag = null; if(d.type !== 'seat' && d.type !== 'wall-draw') saveDB(); }
+      start(false); e.stopPropagation();
+    } else if(pts.size === 1 && canPan(e)) start(true);
+  }, true);
+  target.addEventListener('pointermove', (e) => {
+    if(!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, { x:e.clientX, y:e.clientY });
+    if(!g || (g.pan && pts.size > 1)) return;
+    const m = mid();
+    if(!g.moved && Math.hypot(m.x - g.m.x, m.y - g.m.y) < 6 && Math.abs(m.d / g.m.d - 1) < .04) return;
+    g.moved = true;
+    z.k = g.pan ? z.k : clamp(g.k0 * m.d / g.m.d, 1, 6);
+    const r = target.getBoundingClientRect(), s = scaleOf(g.b, z.k);
+    z.fx = (g.px - (m.x - (r.left + r.width / 2)) / s - g.b.x) / g.b.w;
+    z.fy = (g.py - (m.y - (r.top + r.height / 2)) / s - g.b.y) / g.b.h;
+    redraw();
+    e.stopPropagation();
+  }, true);
+  const end = (e) => {
+    if(!pts.has(e.pointerId)) return;
+    pts.delete(e.pointerId);
+    const moved = g && g.moved;
+    if(pts.size === 0){ g = null; if(z.k < 1.05) z.k = 1; redraw(); }
+    else if(pts.size === 1 && g && !g.pan){ g = null; } // lifting one finger of a pinch does not turn into a tap
+    if(moved || pts.size) { e.stopPropagation(); target._phMoved = Date.now(); }
+  };
+  target.addEventListener('pointerup', end, true);
+  target.addEventListener('pointercancel', end, true);
+}
+function phRedrawEditor(){
+  const cls = getClass(); if(!cls) return;
+  currentViewBox = phZoomBox(computeFitViewBox(cls), phEditZoom);
+  renderCanvas(cls);
+  phSyncEditor();
+}
+phGestures(svg, phEditZoom, () => getClass() && computeFitViewBox(getClass()), phRedrawEditor, (e) => {
+  if(editRoomMode) return false;
+  const r = e.target.closest('[data-role]');
+  return !r || ['canvas-bg', 'wall'].includes(r.getAttribute('data-role'));
+});
+function phSyncEditor(){
+  const fit = document.getElementById('phEditFit');
+  if(fit) fit.hidden = !(phEditZoom.k > 1);
+  const del = document.getElementById('phDelBtn');
+  if(del) del.hidden = !(selectedWallId || selectedDoorId);
+}
+document.getElementById('phEditFit').onclick = () => { phEditZoom.k = 1; phRedrawEditor(); };
+// walls and doors are deleted with the Delete key on a computer
+document.getElementById('phDelBtn').onclick = () => document.dispatchEvent(new KeyboardEvent('keydown', { key:'Delete' }));
+
+// Present on a phone: the room (pinch to zoom) or the List of tables, and two taps swap two students.
+let phPresentMode = 'room', phPick = null; // phPick: {seat} or {student} (not seated yet)
+try{ if(localStorage.getItem('seatingPlanGenerator.phView') === 'list') phPresentMode = 'list'; }catch(e){}
+function phHint(t){ const h = document.getElementById('phHint'); h.textContent = t || ''; h.hidden = !t; }
+function phOccupant(cls, x){ return x.seat ? getAssignment(cls, x.seat) : x.student; }
+function phNameOf(cls, id){ const st = cls.students.find(s => s.id === id); return st ? st.name : ''; }
+function phTapPick(cls, x){
+  if(!phPick){
+    if(!phOccupant(cls, x)) return; // start from a student; an empty seat is where they go
+    phPick = x;
+    phHint('Tap where ' + phNameOf(cls, phOccupant(cls, x)).split(' ')[0] + ' should sit');
+  } else if((phPick.seat && phPick.seat === x.seat) || (phPick.student && phPick.student === x.student)){
+    phPick = null; phHint('');
+  } else if(!phPick.seat && !x.seat){
+    phPick = x; phHint('Tap where ' + phNameOf(cls, x.student).split(' ')[0] + ' should sit');
+  } else {
+    const a = phPick, sa = phOccupant(cls, a), sb = phOccupant(cls, x);
+    if(!cls.assignments) cls.assignments = {};
+    if(a.seat){ if(sb) cls.assignments[a.seat] = sb; else delete cls.assignments[a.seat]; }
+    if(x.seat){ if(sa) cls.assignments[x.seat] = sa; else delete cls.assignments[x.seat]; }
+    syncSoloLocksToAssignments(cls);
+    saveDB();
+    phPick = null;
+    phHint(sb ? 'Swapped ' + phNameOf(cls, sa).split(' ')[0] + ' and ' + phNameOf(cls, sb).split(' ')[0] : 'Moved ' + phNameOf(cls, sa).split(' ')[0]);
+    clearTimeout(phTapPick.t); phTapPick.t = setTimeout(() => { if(!phPick) phHint(''); }, 1800);
+  }
+  render(); renderPresent();
+}
+function phAfterPresent(cls){
+  const ov = document.getElementById('presentOverlay');
+  // another room, or a student taken off the list, since the first tap
+  if(phPick && (phPick.seat ? !findSeatById(cls, phPick.seat) : !cls.students.some(st => st.id === phPick.student))){ phPick = null; phHint(''); }
+  if(phPresentZoom.k > 1){
+    const vb = phZoomBox(computeFitViewBox(cls), phPresentZoom);
+    presentSvg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+  }
+  document.getElementById('phPresentFit').hidden = !(phPresentZoom.k > 1);
+  if(phPick && phPick.seat){ const c = presentSvg.querySelector(`circle[data-seat="${phPick.seat}"]`); if(c) c.classList.add('ph-picked'); }
+  const list = isPhone() && phPresentMode === 'list';
+  ov.classList.toggle('ph-listing', list);
+  document.querySelectorAll('#phPresentSeg button').forEach(b => b.classList.toggle('active', b.dataset.v === phPresentMode));
+  if(list) phRenderList(cls);
+}
+// Tables in use, front to back and left to right as the students see the room (teacher view: the other way round).
+function phRenderList(cls){
+  const box = document.getElementById('phList');
+  const inUse = new Set(tablesForMode(cls, cls.mode).map(t => t.id));
+  const tables = cls.tables.filter(t => inUse.has(t.id) || isSoloDesk(t));
+  // rows: tables within 70 of the first table of a row are in that row
+  tables.sort((a, b) => a.y - b.y);
+  let rowY = null, row = 0;
+  for(const t of tables){ if(rowY === null || t.y - rowY > 70){ rowY = t.y; row++; } t._phRow = row; }
+  tables.sort((a, b) => (a._phRow - b._phRow) || (a.x - b.x));
+  for(const t of tables) delete t._phRow;
+  if(presentView === 'teacher') tables.reverse();
+  const seated = new Set();
+  const chip = (attr, name, cl) => `<button class="ph-seat ${cl}" ${attr}>${escapeHtml(name)}</button>`;
+  let html = tables.map((t, i) => {
+    const seats = seatLocalSlots(t).map(slot => {
+      const sid = getAssignment(cls, slot.id); if(sid) seated.add(sid);
+      const picked = phPick && phPick.seat === slot.id ? ' picked' : '';
+      return chip(`data-seat="${slot.id}"`, sid ? phNameOf(cls, sid) : 'Empty seat', (sid ? '' : 'empty') + picked);
+    }).join('');
+    return `<div class="ph-tbl"><h3>${isSoloDesk(t) ? 'Solo desk' : 'Table ' + (i + 1)}</h3><div class="ph-seats">${seats}</div></div>`;
+  }).join('');
+  const out = cls.students.filter(st => !seated.has(st.id));
+  if(out.length) html += `<div class="ph-tbl"><h3>Not seated</h3><div class="ph-seats">${out.map(st => chip(`data-student="${st.id}"`, st.name, 'unseated' + (phPick && phPick.student === st.id ? ' picked' : ''))).join('')}</div></div>`;
+  if(!tables.length) html = '<p class="hint">No tables yet: add them in Edit Mode.</p>';
+  box.innerHTML = html;
+}
+document.getElementById('phList').addEventListener('click', (e) => {
+  const b = e.target.closest('.ph-seat'); if(!b) return;
+  phTapPick(getClass(), b.dataset.seat ? { seat:b.dataset.seat } : { student:b.dataset.student });
+});
+document.getElementById('phPresentSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-v]'); if(!b) return;
+  phPresentMode = b.dataset.v;
+  try{ localStorage.setItem('seatingPlanGenerator.phView', phPresentMode); }catch(err){}
+  renderPresent();
+});
+document.getElementById('phPresentFit').onclick = () => { phPresentZoom.k = 1; renderPresent(); };
+phGestures(presentSvg, phPresentZoom, () => getClass() && computeFitViewBox(getClass()), () => getClass() && renderPresent(), () => true);
+presentSvg.addEventListener('click', (e) => {
+  if(!isPhone() || Date.now() - (presentSvg._phMoved || 0) < 400) return;
+  const c = e.target.closest('circle[data-seat]');
+  if(c) phTapPick(getClass(), { seat:c.getAttribute('data-seat') });
+});
 
 // ---------- dedicated pairs screen ----------
 let pairsSelectedId = null;
